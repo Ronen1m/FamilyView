@@ -1,0 +1,5 @@
+# never commit plain (unencrypted) data or the Excel source
+*.real.json
+*.xlsm
+*.xlsx
+__pycache__/
