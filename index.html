@@ -80,7 +80,7 @@ label.field input,label.field select,.inp{border:1px solid var(--line);backgroun
 .rail-foot{margin-top:auto;display:grid;gap:6px;padding-top:12px;border-top:1px solid var(--line)}
 main{min-width:0;display:flex;flex-direction:column}
 #topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:10px 24px;flex-wrap:wrap}
-#topbar h2{font-size:20px;margin-inline-end:auto}
+#topbar h2{font-size:27px;font-weight:700;margin-inline-end:auto;letter-spacing:-.015em}
 #menuBtn{display:none}
 .pill{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700}
 .demo-btn{border-color:var(--gold);color:var(--gold);background:var(--gold-soft)}
@@ -176,7 +176,7 @@ td input.cell:focus{border-color:var(--accent);background:var(--surface)}
   body.nav-open #scrim{display:block}
   #menuBtn{display:inline-flex}
   #topbar{padding:8px 16px;top:env(safe-area-inset-top,0px)}
-  #topbar h2{font-size:17px}
+  #topbar h2{font-size:22px}
   #page{padding:14px 16px 90px}
   .kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   .kpi{padding:12px}
@@ -221,8 +221,8 @@ body.edit-on .sticky-col{max-width:none}
 body.edit-on td input.cell.wide{width:170px}
 tr.pctrow td{font-size:12px;color:var(--muted);padding-block:4px}
 td.x-col{width:28px;padding-inline:4px}
-.xbtn{border:0;background:transparent;color:var(--muted);cursor:pointer;width:24px;height:24px;border-radius:6px;font-size:15px;line-height:1;display:inline-grid;place-items:center}
-.xbtn:hover{background:var(--neg-soft);color:var(--neg)}
+.xbtn{border:0;background:var(--neg-soft);color:var(--neg);font-weight:700;margin-inline-end:6px;cursor:pointer;width:24px;height:24px;border-radius:6px;font-size:15px;line-height:1;display:inline-grid;place-items:center}
+.xbtn:hover{background:var(--neg);color:#fff}
 .toast .undo{margin-inline-start:10px;background:transparent;border:1px solid currentColor;color:inherit;border-radius:6px;padding:1px 8px;cursor:pointer;font-weight:700}
 .contact{grid-template-columns:auto 1fr;column-gap:12px;align-items:start}
 .contact>*:not(.c-ico){grid-column:2}
@@ -298,6 +298,7 @@ td.x-col{width:28px;padding-inline:4px}
 <div class="toast" id="toast" hidden></div>
 
 <script src="vendor/chart.umd.js"></script>
-<script src="app.js"></script>
+<script>/* load the newest app code every time (GitHub Pages caches files for ~10 minutes) */
+(function(){var s=document.createElement("script");s.src="app.js?v="+Date.now();document.body.appendChild(s);})();</script>
 </body>
 </html>

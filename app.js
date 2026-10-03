@@ -312,14 +312,14 @@ VIEWS.total = () => {
       ${E ? '<button class="btn small" id="addAsset" type="button">+ נכס</button>' : ''}
       <button class="btn small primary" id="snapBtn" type="button">שמירת תמונת מצב לגרף</button></div>
     <div class="tbl-wrap"><table><thead><tr><th class="sticky-col">נכס</th><th>סוג</th><th class="n">שווי (₪)</th><th class="n">מט״ח</th><th class="n">סכום קנייה</th><th class="n">קצבה חודשית</th><th>כתובת</th><th>עדכון אחרון</th></tr></thead><tbody>
-    ${d.assetGroups.map(g => {
+    ${[...d.assetGroups, ...new Set(d.assets.map(a => a.group).filter(g => !d.assetGroups.includes(g)))].map(g => {
       const rows = d.assets.map((a, i) => ({a, i})).filter(x => x.a.group === g);
       if (!rows.length) return '';
       return rows.map(({a, i}) => `<tr>
         <td class="sticky-col">${E ? `<button class="xbtn" data-delasset="${i}" title="הסרת השורה" aria-label="הסרת השורה" type="button">✕</button>` + inp(`assets.${i}.name`, 'text', 'wide') : esc(a.name)}</td>
-        <td>${E ? `<select class="cell" data-group="${i}">${d.assetGroups.map(x => `<option ${x === g ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>` : esc(g)}</td>
+        <td>${E ? (S.newGroupFor === i ? `<input class="cell wide" data-newgroup="${i}" placeholder="שם הסוג החדש" autofocus>` : `<select class="cell" data-group="${i}">${d.assetGroups.map(x => `<option ${x === g ? 'selected' : ''}>${esc(x)}</option>`).join('')}<option value="__new">+ סוג חדש…</option></select>`) : esc(g)}</td>
         <td class="n">${E && (!a.currency || a.currency === 'ILS') ? inp(`assets.${i}.value`).replace('<input', `<input data-touch="assets.${i}.updated"`) : money(assetValue(a))}</td>
-        <td class="n">${a.currency && a.currency !== 'ILS' ? (E ? inp(`assets.${i}.foreign`).replace('<input', `<input data-touch="assets.${i}.updated"`) : money(a.foreign, {cur:a.currency === 'EUR' ? '€' : '$'})) + (a.fx ? ` <span class="chip var" title="שער ידני">×${a.fx}</span>` : '') : ''}</td>
+        <td class="n">${E ? `<select class="cell" data-cur="${i}">${[['ILS','₪ שקל'],['USD','$ דולר'],['EUR','€ אירו']].map(([c, l]) => `<option value="${c}" ${(a.currency || 'ILS') === c ? 'selected' : ''}>${l}</option>`).join('')}</select> ` : ''}${a.currency && a.currency !== 'ILS' ? (E ? inp(`assets.${i}.foreign`).replace('<input', `<input data-touch="assets.${i}.updated"`) : money(a.foreign, {cur:a.currency === 'EUR' ? '€' : '$'})) + (a.fx ? ` <span class="chip var" title="שער ידני">×${a.fx}</span>` : '') : ''}</td>
         <td class="n">${a.buyPrice ? money(a.buyPrice) : ''}</td>
         <td class="n">${a.pension ? money(a.pension) : ''}</td>
         <td>${esc(a.address || '')}</td>
@@ -340,10 +340,23 @@ VIEWS.total.after = () => {
     if (e) Object.assign(e, row); else h.push(row);
     markDirty(); toast('תמונת המצב נוספה לגרף הצמיחה');
   };
-  $$('[data-group]').forEach(sel => sel.onchange = () => { D().assets[+sel.dataset.group].group = sel.value; markDirty(); rerenderKeep(); });
+  $$('[data-group]').forEach(sel => sel.onchange = () => {
+    const i = +sel.dataset.group;
+    if (sel.value === '__new') { S.newGroupFor = i; rerenderKeep(); const el = $(`[data-newgroup="${i}"]`); el && el.focus(); return; }
+    D().assets[i].group = sel.value; markDirty(); rerenderKeep(); });
+  $$('[data-newgroup]').forEach(el => { const done = () => { const v = el.value.trim(), i = +el.dataset.newgroup; S.newGroupFor = null;
+      if (v) { if (!D().assetGroups.includes(v)) D().assetGroups.push(v); D().assets[i].group = v; markDirty(); }
+      rerenderKeep(); };
+    el.onchange = done; el.onkeydown = e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = ''; el.blur(); } }; el.onblur = done; });
+  $$('[data-cur]').forEach(sel => sel.onchange = () => { const a = D().assets[+sel.dataset.cur], c = sel.value;
+    if (c === 'ILS') { a.value = Math.round(assetValue(a)); delete a.foreign; } else if (!a.foreign) { a.foreign = 0; }
+    a.currency = c; markDirty(); rerenderKeep(); });
   $$('[data-delasset]').forEach(b => b.onclick = () => { const arr = D().assets; removeRow(arr, +b.dataset.delasset, arr[+b.dataset.delasset].name); });
   $$('[data-delliab]').forEach(b => b.onclick = () => { const arr = D().liabilities; removeRow(arr, +b.dataset.delliab, arr[+b.dataset.delliab].name); });
-  const aa = $('#addAsset'); if (aa) aa.onclick = () => { D().assets.push({name:'נכס חדש', group:D().assetGroups[0], value:0, currency:'ILS', updated:''}); markDirty(); render(); };
+  const aa = $('#addAsset'); if (aa) aa.onclick = () => {
+    if (!D().assetGroups.includes('אחר')) D().assetGroups.push('אחר');
+    D().assets.push({name:'נכס חדש', group:'אחר', value:0, currency:'ILS', updated:''}); markDirty(); rerenderKeep();
+    toast('נוסף "נכס חדש" תחת הסוג "אחר" – בחרו לו סוג מהרשימה בעמודה "סוג"', 4500); };
   const al = $('#addLiab'); if (al) al.onclick = () => { D().liabilities.push({name:'התחייבות חדשה', value:0}); markDirty(); render(); };
 };
 
