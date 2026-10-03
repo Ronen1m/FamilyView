@@ -64,9 +64,11 @@ async function encryptPayload(obj, pw){
 
 /* ---------- GitHub sync ---------- */
 const ghCfg = () => store.get('github');
-async function ghRequest(method, body){
+const demoPath = g => (g.path || 'data/data.enc.json').replace(/[^/]*$/, 'demo.json');
+const canPublishDemo = () => !!(ghCfg()?.token);
+async function ghRequest(method, body, path){
   const g = ghCfg();
-  const url = `https://api.github.com/repos/${g.owner}/${g.repo}/contents/${g.path || 'data/data.enc.json'}` + (method === 'GET' ? `?ref=${g.branch || 'main'}` : '');
+  const url = `https://api.github.com/repos/${g.owner}/${g.repo}/contents/${path || g.path || 'data/data.enc.json'}` + (method === 'GET' ? `?ref=${g.branch || 'main'}` : '');
   const r = await fetch(url, {method, headers:{Authorization:`Bearer ${g.token}`, Accept:'application/vnd.github+json'}, body: body ? JSON.stringify(body) : undefined, cache:'no-store'});
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
   return r.json();
@@ -219,7 +221,7 @@ function removeRow(arr, idx, label){
   toast(`"${label}" הוסרה`, 0, () => { arr.splice(idx, 0, row); rerenderKeep(); });
 }
 function rerenderKeep(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
-function markDirty(){ if (S.mode === 'demo') { if (!S.demoWarned) { toast('מצב דמו: השינויים זמניים ולא נשמרים'); S.demoWarned = true; } return; } S.dirty = true; $('#savebar').hidden = false; }
+function markDirty(){ if (S.mode === 'demo' && !canPublishDemo()) { if (!S.demoWarned) { toast('מצב דמו: השינויים זמניים ולא נשמרים'); S.demoWarned = true; } return; } S.dirty = true; $('#savebar').hidden = false; }
 function buildNav(){
   $('#nav').innerHTML = PAGES.map(p => `<button class="nav-btn" data-tab="${p.id}" type="button"><svg viewBox="0 0 24 24">${p.i}</svg>${p.t}</button>`).join('');
   $$('#nav .nav-btn').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; location.hash = S.tab; document.body.classList.remove('nav-open'); render(); });
@@ -241,7 +243,7 @@ function render(){
   $('#pageTitle').textContent = p.t;
   setYearSel(p.year);
   document.body.classList.toggle('edit-on', S.edit);
-  $('#modePill').innerHTML = S.mode === 'demo' ? '<span class="pill demo">דמו · נתונים בדויים</span>' : '';
+  $('#modePill').innerHTML = S.mode === 'demo' ? `<span class="pill demo">דמו · נתונים בדויים${canPublishDemo() ? ' · שמירה לכולם' : ''}</span>` : '';
   $('#updatedLbl').textContent = 'עודכן: ' + (D().meta.updated || '');
   $('#familyLbl').textContent = D().settings.familyName || 'המשפחה שלנו';
   document.title = `${D().settings.familyName || 'המשפחה שלנו'} · ניתוח פיננסי`;
@@ -654,7 +656,7 @@ function openSettings(){
   const latest = yearsOf(d.expenses).pop(), next = String(+latest + 1);
   $('#settingsPanel').innerHTML = `
     <div class="row"><h2 style="font-size:20px;margin-inline-end:auto">הגדרות</h2><button class="btn ghost" data-close type="button">סגירה ✕</button></div>
-    ${demo ? '<p class="note"><b>מצב דמו.</b> אפשר לשחק ולשנות הכול – השינויים נשארים רק בדפדפן הזה עד היציאה, ולא נוגעים בנתונים האמיתיים של המשפחה.</p>' : ''}
+    ${demo ? (canPublishDemo() ? '<p class="note"><b>מצב דמו – עורך.</b> במכשיר הזה מוגדר חיבור ל־GitHub, ולכן "שמירה" מעדכנת את הדמו לכל מי שנכנס אליו. הנתונים האמיתיים לא מושפעים.</p>' : '<p class="note"><b>מצב דמו.</b> אפשר לשחק ולשנות הכול – השינויים נשארים רק בדפדפן הזה עד היציאה, ולא נוגעים בנתונים האמיתיים של המשפחה.</p>') : ''}
     <section class="set-sec"><h3>שערי מטבע</h3><p>משמשים להמרת נכסים והתחייבויות במט״ח לשקלים.</p>
       <div class="row"><label class="field">דולר ($)<input class="inp" id="sUsd" inputmode="decimal" value="${d.rates.usd}"></label><label class="field">אירו (€)<input class="inp" id="sEur" inputmode="decimal" value="${d.rates.eur}"></label></div></section>
     <section class="set-sec"><h3>שם המשפחה</h3><p>מוצג בראש התפריט ובכותרת הדפדפן.</p>
@@ -716,10 +718,17 @@ function download(text, name){
 
 /* ---------- save ---------- */
 async function save(){
-  if (S.mode === 'demo') return toast('מצב דמו: השינויים לא נשמרים');
+  if (S.mode === 'demo' && !canPublishDemo()) return toast('מצב דמו: השינויים לא נשמרים');
   const btn = $('#saveBtn'); btn.disabled = true; btn.textContent = 'שומר…';
   try {
     D().meta.updated = today();
+    if (S.mode === 'demo') { // publish the demo for everyone (plain JSON – it only holds made-up data)
+      const g = ghCfg(), path = demoPath(g);
+      let sha; try { sha = (await ghRequest('GET', null, path)).sha; } catch {}
+      await ghRequest('PUT', {message:`עדכון נתוני דמו ${today()}`, content:b64e(new TextEncoder().encode(JSON.stringify(D()))), branch:g.branch || 'main', sha}, path);
+      toast('הדמו עודכן לכולם ✓ (יופיע באתר תוך דקה־שתיים)', 4000);
+      S.dirty = false; $('#savebar').hidden = true; render(); btn.disabled = false; btn.textContent = 'שמירה'; return;
+    }
     const payload = await encryptPayload(D(), S.password);
     const g = ghCfg();
     if (g && g.token) {
@@ -745,6 +754,9 @@ async function doLogin(user, pw){
   const err = $('#loginErr'); err.textContent = '';
   if (user.trim().toLowerCase() === 'demo') {
     if (pw !== 'demo') { err.textContent = 'סיסמת הדמו היא demo'; return; }
+    if (canPublishDemo()) { // owner's device: read the latest demo straight from GitHub
+      try { const f = await ghRequest('GET', null, demoPath(ghCfg())); return enter('demo', JSON.parse(new TextDecoder().decode(b64d(f.content))), null); } catch (e) { console.warn(e); }
+    }
     const r = await fetch('data/demo.json', {cache:'no-store'}); return enter('demo', await r.json(), null);
   }
   if (!window.crypto?.subtle) { err.textContent = 'הדפדפן לא תומך בפענוח. יש לפתוח את האתר בכתובת https.'; return; }
