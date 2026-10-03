@@ -4,31 +4,39 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<meta name="theme-color" content="#0d6b5f">
+<meta name="theme-color" content="#0f3f37">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='13' fill='%230e7a66'/%3E%3Crect x='9' y='29' width='8' height='10' rx='2' fill='%23f2c14e'/%3E%3Crect x='20' y='23' width='8' height='16' rx='2' fill='%23f2c14e'/%3E%3Crect x='31' y='16' width='8' height='23' rx='2' fill='%23f2c14e'/%3E%3Cpath d='M8 24.5l9.5-7.5 6 4 12-11M30 10h5.6v5.6' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='13' fill='%230e7a66'/%3E%3Crect x='9' y='29' width='8' height='10' rx='2' fill='%23f2c14e'/%3E%3Crect x='20' y='23' width='8' height='16' rx='2' fill='%23f2c14e'/%3E%3Crect x='31' y='16' width='8' height='23' rx='2' fill='%23f2c14e'/%3E%3Cpath d='M8 24.5l9.5-7.5 6 4 12-11M30 10h5.6v5.6' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>כלכלת המשפחה</title>
+<title>ניתוח פיננסי משפחתי</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=Rubik:wght@500;600;700&display=swap">
 <style>
 /* Layout: right-hand rail of sections (drawer on phones) + a scrolling ledger of cards and tables. */
 :root{
-  --bg:#eef2f0; --surface:#ffffff; --surface-2:#f6f8f7; --ink:#15211e; --muted:#5b6b66; --line:#dbe3e0;
-  --accent:#0d6b5f; --accent-ink:#ffffff; --accent-soft:#d9ece8; --spend:#b8702a; --spend-soft:#f5e7d6;
-  --pos:#1d7f4c; --pos-soft:#dcefe3; --neg:#b93c34; --neg-soft:#f6dedb; --warn:#a46a00;
-  --shadow:0 1px 2px rgba(20,40,35,.06),0 2px 8px rgba(20,40,35,.05);
+  --bg:#e8efeb; --surface:#ffffff; --surface-2:#f1f6f3; --ink:#0f211c; --muted:#566b64; --line:#d5e1dc;
+  --accent:#0e7a66; --accent-ink:#ffffff; --accent-soft:#d6eee6; --gold:#c98a12; --gold-soft:#fbefd0;
+  --spend:#bd6a1e; --spend-soft:#f8e6d3; --pos:#18804a; --pos-soft:#d9f0e2; --neg:#b9382f; --neg-soft:#f7dcd8; --warn:#9a6400;
+  --rail-1:#0f3f37; --rail-2:#06231e; --rail-ink:#c9e0d8; --hero-1:#0f8a72; --hero-2:#0a4a40;
+  --glow:rgba(14,122,102,.16);
+  --shadow:0 1px 2px rgba(16,40,33,.05),0 10px 28px -16px rgba(16,40,33,.28);
   --f-display:"Rubik","Assistant",system-ui,sans-serif; --f-body:"Assistant",system-ui,"Segoe UI",Arial,sans-serif;
-  --radius:10px; color-scheme:light;
+  --radius:14px; color-scheme:light;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#0e1513; --surface:#16201e; --surface-2:#1b2725; --ink:#e4ece9; --muted:#93a59f; --line:#283633;
-  --accent:#3db3a1; --accent-ink:#06211c; --accent-soft:#173a35; --spend:#e2a35c; --spend-soft:#3a2b1a;
-  --pos:#4cc584; --pos-soft:#173526; --neg:#ef7067; --neg-soft:#3d1d1b; --warn:#e2b04a;
-  --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;}}
+  --bg:#0a1411; --surface:#12201c; --surface-2:#172925; --ink:#e3ede9; --muted:#8fa69e; --line:#22362f;
+  --accent:#3cc4a8; --accent-ink:#04201a; --accent-soft:#163a33; --gold:#f0bd4f; --gold-soft:#3a2f14;
+  --spend:#e7a25b; --spend-soft:#3a2a19; --pos:#4fcc89; --pos-soft:#15352a; --neg:#f0726a; --neg-soft:#3d1c1a; --warn:#e8b54c;
+  --rail-1:#0c2a25; --rail-2:#050f0d; --rail-ink:#a9c4bb; --hero-1:#11765f; --hero-2:#073c33;
+  --glow:rgba(60,196,168,.10);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 28px -16px rgba(0,0,0,.6); color-scheme:dark;}}
 :root[data-theme="dark"]{
-  --bg:#0e1513; --surface:#16201e; --surface-2:#1b2725; --ink:#e4ece9; --muted:#93a59f; --line:#283633;
-  --accent:#3db3a1; --accent-ink:#06211c; --accent-soft:#173a35; --spend:#e2a35c; --spend-soft:#3a2b1a;
-  --pos:#4cc584; --pos-soft:#173526; --neg:#ef7067; --neg-soft:#3d1d1b; --warn:#e2b04a;
-  --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark;}
+  --bg:#0a1411; --surface:#12201c; --surface-2:#172925; --ink:#e3ede9; --muted:#8fa69e; --line:#22362f;
+  --accent:#3cc4a8; --accent-ink:#04201a; --accent-soft:#163a33; --gold:#f0bd4f; --gold-soft:#3a2f14;
+  --spend:#e7a25b; --spend-soft:#3a2a19; --pos:#4fcc89; --pos-soft:#15352a; --neg:#f0726a; --neg-soft:#3d1c1a; --warn:#e8b54c;
+  --rail-1:#0c2a25; --rail-2:#050f0d; --rail-ink:#a9c4bb; --hero-1:#11765f; --hero-2:#073c33;
+  --glow:rgba(60,196,168,.10);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 28px -16px rgba(0,0,0,.6); color-scheme:dark;}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--f-body);-webkit-font-smoothing:antialiased}
@@ -180,14 +188,70 @@ td input.cell:focus{border-color:var(--accent);background:var(--surface)}
 }
 #scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:44}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+
+/* ---------- visual layer: forest-green rail, soft glow ground, gold for growth ---------- */
+body{background:radial-gradient(900px 420px at 100% -8%,var(--glow),transparent 70%),radial-gradient(700px 380px at 0% 100%,var(--glow),transparent 70%),var(--bg);background-attachment:fixed}
+.logo{width:38px;height:38px;flex:none;display:block}
+.logo.lg{width:56px;height:56px}
+#rail{background:linear-gradient(180deg,var(--rail-1),var(--rail-2));border-inline-end:0;color:var(--rail-ink)}
+#rail .brand b{color:#fff}
+#rail .brand small{color:var(--rail-ink);opacity:.8}
+#rail .brand .sub{display:block;color:var(--gold);font-size:12px;font-weight:700;letter-spacing:.02em}
+#rail .nav-btn{color:var(--rail-ink)}
+#rail .nav-btn:hover{background:rgba(255,255,255,.07);color:#fff}
+#rail .nav-btn.active{background:rgba(255,255,255,.12);color:#fff;box-shadow:inset -3px 0 0 var(--gold)}
+#rail .rail-foot{border-top-color:rgba(255,255,255,.1)}
+#topbar{background:color-mix(in srgb,var(--bg) 72%,transparent);border-bottom-color:transparent}
+.card,.kpi,.contact,.set-sec{border-color:color-mix(in srgb,var(--line) 70%,transparent);box-shadow:var(--shadow)}
+.kpi{position:relative;overflow:hidden}
+.kpi .lbl{display:flex;align-items:center;gap:6px}
+.kpi .lbl:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);opacity:.7;flex:none}
+.kpi.hero{background:linear-gradient(135deg,var(--hero-1),var(--hero-2));border:0;color:#fff}
+.kpi.hero .lbl:before{background:var(--gold);opacity:1}
+.kpi.hero:after{content:"";position:absolute;inset-inline-start:-30px;bottom:-60px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(255,214,120,.28),transparent 65%);pointer-events:none}
+.kpi.hero .val{color:#fff}
+thead th{background:color-mix(in srgb,var(--accent-soft) 55%,var(--surface));color:color-mix(in srgb,var(--accent) 60%,var(--ink))}
+thead .sticky-col{background:color-mix(in srgb,var(--accent-soft) 55%,var(--surface))}
+.btn.primary{background:linear-gradient(135deg,var(--hero-1),var(--hero-2));border-color:transparent;color:#fff}
+.card-h h3{display:flex;align-items:center;gap:8px}
+.card-h h3:before{content:"";width:4px;height:16px;border-radius:2px;background:linear-gradient(var(--gold),var(--accent))}
+body.edit-on .sticky-col{max-width:none}
+body.edit-on td input.cell.wide{width:170px}
+tr.pctrow td{font-size:12px;color:var(--muted);padding-block:4px}
+td.x-col{width:28px;padding-inline:4px}
+.xbtn{border:0;background:transparent;color:var(--muted);cursor:pointer;width:24px;height:24px;border-radius:6px;font-size:15px;line-height:1;display:inline-grid;place-items:center}
+.xbtn:hover{background:var(--neg-soft);color:var(--neg)}
+.toast .undo{margin-inline-start:10px;background:transparent;border:1px solid currentColor;color:inherit;border-radius:6px;padding:1px 8px;cursor:pointer;font-weight:700}
+.contact{grid-template-columns:auto 1fr;column-gap:12px;align-items:start}
+.contact>*:not(.c-ico){grid-column:2}
+.c-ico{grid-row:1/span 4;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.c-ico svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.c-ico.gold{background:var(--gold-soft);color:var(--gold)}
+.c-ico.blue{background:color-mix(in srgb,#3c64b1 18%,var(--surface));color:#4a73c4}
+/* login */
+#login{background:radial-gradient(800px 500px at 80% 0%,rgba(240,189,79,.18),transparent 60%),linear-gradient(160deg,var(--rail-1),var(--rail-2))}
+.login-card{border:0;box-shadow:0 30px 80px -30px rgba(0,0,0,.6)}
+.login-brand{display:flex;align-items:center;gap:12px}
+.login-brand small{display:block;color:var(--gold);font-weight:700;font-size:13px}
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <linearGradient id="lgBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#15a083"/><stop offset="1" stop-color="#0a4a40"/></linearGradient>
+  <linearGradient id="lgGold" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#e09a1f"/><stop offset="1" stop-color="#ffd978"/></linearGradient>
+  <symbol id="logo" viewBox="0 0 48 48">
+    <rect width="48" height="48" rx="13" fill="url(#lgBg)"/>
+    <rect x="9" y="29" width="8" height="10" rx="2.2" fill="url(#lgGold)" opacity=".75"/>
+    <rect x="20" y="23" width="8" height="16" rx="2.2" fill="url(#lgGold)" opacity=".88"/>
+    <rect x="31" y="16" width="8" height="23" rx="2.2" fill="url(#lgGold)"/>
+    <path d="M8 24.5l9.5-7.5 6 4 12-11" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M30 10h5.6v5.6" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol></defs></svg>
 
 <section id="login">
   <form class="login-card" id="loginForm" autocomplete="on">
-    <div class="mark">₪</div>
-    <div><h1>כלכלת המשפחה</h1><p>הכניסה מוגנת בסיסמה. הנתונים מוצפנים ונפתחים רק במכשיר שלך.</p></div>
+    <div class="login-brand"><svg class="logo lg"><use href="#logo"/></svg><div><h1>ניתוח פיננסי משפחתי</h1><small>הכנסות · הוצאות · צמיחה</small></div></div>
+    <p>הכניסה מוגנת בסיסמה. הנתונים מוצפנים ונפתחים רק במכשיר שלך.</p>
     <label class="field">משתמש
       <input id="user" name="username" autocomplete="username" value="family" required>
     </label>
@@ -204,7 +268,7 @@ td input.cell:focus{border-color:var(--accent);background:var(--surface)}
 
 <div id="app" hidden>
   <nav id="rail" aria-label="ניווט">
-    <div class="brand"><div class="mark">₪</div><div><b>כלכלת המשפחה</b><small id="updatedLbl"></small></div></div>
+    <div class="brand"><svg class="logo"><use href="#logo"/></svg><div><b id="familyLbl">המשפחה שלנו</b><span class="sub">ניתוח פיננסי</span><small id="updatedLbl"></small></div></div>
     <div id="nav"></div>
     <div class="rail-foot">
       <button class="nav-btn" id="settingsBtn" type="button"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>הגדרות</button>

@@ -157,7 +157,7 @@ for a in assets:
                      'השקעה קרן AUSTIN', 'עוש בנק אמריקה', 'השקעות קרן METAOR SPRINT', 'סקונדרי מטח (לאומי)'):
         a['currency'] = 'USD'
     elif a['name'].startswith('פורטוגל'):
-        a['currency'] = 'EUR_X4'   # value = foreign * 4  (as in Excel – to confirm)
+        a['currency'] = 'EUR'
     else:
         a['currency'] = 'ILS'
 data['assets'] = assets
@@ -253,7 +253,7 @@ for r in range(6, ws.max_row + 1):
 data['portugal'] = {'currency': 'EUR', 'transfers': pt}
 
 data['settings'] = {
-    'familyName': 'משפחת מוזס',
+    'familyName': 'המשפחה שלנו',
     'budgetSplit': {'need': 50, 'want': 30, 'invest': 20},
     'people': {'p1': 'רונן', 'p2': 'טל'},
 }

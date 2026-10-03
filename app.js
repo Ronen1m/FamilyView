@@ -83,7 +83,7 @@ async function loadEncrypted(){
 
 /* ---------- data helpers ---------- */
 function normalize(d){
-  for (const a of d.assets) if (a.currency === 'EUR_X4') { a.currency = 'EUR'; a.fx = 4; }
+  for (const a of d.assets) { if (a.currency === 'EUR_X4') a.currency = 'EUR'; delete a.fx; }
   d.expenseTotalsOverride ||= {};
   d.settings ||= {}; d.settings.people ||= {p1:'רונן', p2:'טל'};
   for (const c of d.risk?.coverage || []) if (c.people['אפיר']) { c.people['אופיר'] = c.people['אפיר']; delete c.people['אפיר']; }
@@ -209,8 +209,17 @@ function chart(id, cfg){
 function deepMerge(a, b){ for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k])) a[k] = deepMerge(a[k] || {}, b[k]); else a[k] = b[k]; } return a; }
 
 /* ---------- UI shell ---------- */
-function toast(msg, ms=2600){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, ms); }
-function markDirty(){ if (S.mode === 'demo') { toast('מצב דמו: השינויים לא יישמרו'); return; } S.dirty = true; $('#savebar').hidden = false; }
+function toast(msg, ms=2600, undo){
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  if (undo) { const b = document.createElement('button'); b.className = 'undo'; b.type = 'button'; b.textContent = 'ביטול'; b.onclick = () => { undo(); t.hidden = true; }; t.appendChild(b); }
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, undo ? 6000 : ms);
+}
+function removeRow(arr, idx, label){
+  const [row] = arr.splice(idx, 1); markDirty(); rerenderKeep();
+  toast(`"${label}" הוסרה`, 0, () => { arr.splice(idx, 0, row); rerenderKeep(); });
+}
+function rerenderKeep(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
+function markDirty(){ if (S.mode === 'demo') { if (!S.demoWarned) { toast('מצב דמו: השינויים זמניים ולא נשמרים'); S.demoWarned = true; } return; } S.dirty = true; $('#savebar').hidden = false; }
 function buildNav(){
   $('#nav').innerHTML = PAGES.map(p => `<button class="nav-btn" data-tab="${p.id}" type="button"><svg viewBox="0 0 24 24">${p.i}</svg>${p.t}</button>`).join('');
   $$('#nav .nav-btn').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; location.hash = S.tab; document.body.classList.remove('nav-open'); render(); });
@@ -234,6 +243,8 @@ function render(){
   document.body.classList.toggle('edit-on', S.edit);
   $('#modePill').innerHTML = S.mode === 'demo' ? '<span class="pill demo">דמו · נתונים בדויים</span>' : '';
   $('#updatedLbl').textContent = 'עודכן: ' + (D().meta.updated || '');
+  $('#familyLbl').textContent = D().settings.familyName || 'המשפחה שלנו';
+  document.title = `${D().settings.familyName || 'המשפחה שלנו'} · ניתוח פיננסי`;
   const page = $('#page');
   page.innerHTML = VIEWS[p.id]();
   bindEditable(page);
@@ -310,7 +321,6 @@ VIEWS.total = () => {
     }).join('')}
     <tr class="total"><td class="sticky-col">סה״כ נכסים</td><td></td><td class="n">${money(t.assets)}</td><td colspan="5"></td></tr>
     </tbody></table></div>
-    <p class="note">דירות פורטוגל מחושבות כמו בקובץ האקסל: הסכום באירו כפול 4 (ולא לפי שער האירו). צריך לאשר אם זו הכוונה.</p>
   </section>`;
 };
 VIEWS.total.after = () => {
@@ -373,7 +383,7 @@ VIEWS.exp = () => {
       (closed ? '' : g.items.map(it => {
         const ii = g.items.indexOf(it);
         const p = `expenses.${y}.${g.gi}.items.${ii}`;
-        return `<tr><td class="sticky-col">${E ? inp(p + '.name', 'text', 'wide') : esc(it.name)}${legacy ? '' : `<button class="chip ${it.fixed ? 'fixed' : 'var'}" data-fix="${p}" title="${E ? 'לחיצה מחליפה קבועה/משתנה' : ''}" type="button">${it.fixed ? 'קבועה' : 'משתנה'}</button>`}</td>
+        return `<tr><td class="sticky-col">${E ? `<button class="xbtn" data-delitem="${y}.${g.gi}.${ii}" title="הסרת השורה" aria-label="הסרת השורה" type="button">✕</button>` + inp(p + '.name', 'text', 'wide') : esc(it.name)}${legacy ? '' : `<button class="chip ${it.fixed ? 'fixed' : 'var'}" data-fix="${p}" title="${E ? 'לחיצה מחליפה קבועה/משתנה' : ''}" type="button">${it.fixed ? 'קבועה' : 'משתנה'}</button>`}</td>
           ${it.months.map((v, i) => E ? `<td class="n">${inp(p + '.months.' + i)}</td>` : cell(v)).join('')}<td class="n">${money(sum(it.months))}</td></tr>`;
       }).join('') + (E ? `<tr><td class="sticky-col"><button class="btn small" data-additem="${y}.${g.gi}" type="button">+ קטגוריה ב${esc(g.domain)}</button></td><td colspan="13"></td></tr>` : ''));
   }).join('');
@@ -417,6 +427,7 @@ VIEWS.exp.after = () => {
   $('#openAll').onclick = () => { e.groups.forEach(g => S.closed[y + g.gi] = false); render(); };
   $('#closeAll').onclick = () => { e.groups.forEach(g => S.closed[y + g.gi] = true); render(); };
   $$('[data-fix]').forEach(b => b.onclick = ev => { ev.stopPropagation(); if (!S.edit) { toast('יש להיכנס למצב עריכה כדי לשנות'); return; } const it = getPath(b.dataset.fix); it.fixed = !it.fixed; markDirty(); const sy = window.scrollY; render(); window.scrollTo(0, sy); });
+  $$('[data-delitem]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const [yy, gi, ii] = b.dataset.delitem.split('.'); const arr = D().expenses[yy][gi].items; removeRow(arr, +ii, arr[+ii].name); });
   $$('[data-additem]').forEach(b => b.onclick = () => { const [yy, gi] = b.dataset.additem.split('.'); D().expenses[yy][gi].items.push({name:'קטגוריה חדשה', fixed:false, months:Array(12).fill(0)}); markDirty(); render(); });
 };
 
@@ -440,7 +451,7 @@ VIEWS.inc = () => {
     <div class="card-h"><h3>פירוט הכנסות ${y}</h3>${E ? '<button class="btn small" id="addInc" type="button">+ מקור הכנסה</button>' : ''}</div>
     <div class="tbl-wrap"><table>
       <thead><tr><th class="sticky-col">מקור הכנסה</th>${MS.map(m => `<th class="n">${m}</th>`).join('')}<th class="n">סה״כ</th></tr></thead>
-      <tbody>${inc.rows.map((r, ri) => `<tr><td class="sticky-col">${E ? inp(`incomes.${y}.${ri}.name`, 'text', 'wide') : esc(r.name)}</td>${r.months.map((v, i) => E ? `<td class="n">${inp(`incomes.${y}.${ri}.months.${i}`)}</td>` : cell(v)).join('')}<td class="n">${money(sum(r.months))}</td></tr>`).join('')}
+      <tbody>${inc.rows.map((r, ri) => `<tr><td class="sticky-col">${E ? `<button class="xbtn" data-delinc="${ri}" title="הסרת השורה" aria-label="הסרת השורה" type="button">✕</button>` + inp(`incomes.${y}.${ri}.name`, 'text', 'wide') : esc(r.name)}</td>${r.months.map((v, i) => E ? `<td class="n">${inp(`incomes.${y}.${ri}.months.${i}`)}</td>` : cell(v)).join('')}<td class="n">${money(sum(r.months))}</td></tr>`).join('')}
       <tr class="total"><td class="sticky-col">סה״כ</td>${inc.total.map(v => cell(v)).join('')}<td class="n">${money(tot)}</td></tr></tbody>
     </table></div>
   </section>`;
@@ -450,6 +461,7 @@ VIEWS.inc.after = () => {
   const order = ['משכורות','שכירות','קצבאות','החזרים','אחר'];
   const ds = order.map((g, i) => ({label:g, data:MS.map((_, m) => sum(inc.rows.filter(r => incomeGroup(r.name) === g).map(r => +r.months[m] || 0))), backgroundColor:pal(i === 0 ? 0 : i === 1 ? 2 : i === 2 ? 3 : i === 3 ? 1 : 9)})).filter(d => sum(d.data));
   chart('cInc', {type:'bar', stacked:true, data:{labels:MS, datasets:ds}});
+  $$('[data-delinc]').forEach(b => b.onclick = () => { const arr = D().incomes[y]; removeRow(arr, +b.dataset.delinc, arr[+b.dataset.delinc].name); });
   const a = $('#addInc'); if (a) a.onclick = () => { D().incomes[y].push({name:'מקור חדש', months:Array(12).fill(0)}); markDirty(); render(); };
 };
 
@@ -477,6 +489,8 @@ VIEWS.balance = () => {
       <tr><td class="sticky-col">הכנסות</td>${b.inc.map(v => cell(v)).join('')}<td class="n">${money(sum(b.inc))}</td><td class="n">${money(sum(b.inc) / n)}</td></tr>
       <tr><td class="sticky-col">הוצאות</td>${b.exp.map(v => cell(v)).join('')}<td class="n">${money(sum(b.exp))}</td><td class="n">${money(X / n)}</td></tr>
       <tr class="total"><td class="sticky-col">כסף פנוי</td>${b.free.map((v, i) => `<td class="n ${v < 0 ? 'down' : ''}">${act.includes(i) ? money(v) : '–'}</td>`).join('')}<td class="n">${money(I - X)}</td><td class="n">${money((I - X) / n)}</td></tr>
+      <tr class="pctrow"><td class="sticky-col">% הוצאות מההכנסות</td>${b.exp.map((v, i) => `<td class="n">${act.includes(i) && b.inc[i] ? pct(v / b.inc[i]) : '–'}</td>`).join('')}<td class="n">${pct(X / I)}</td><td class="n"></td></tr>
+      <tr class="pctrow"><td class="sticky-col">% כסף פנוי מההכנסות</td>${b.free.map((v, i) => `<td class="n ${v < 0 ? 'down' : 'up'}">${act.includes(i) && b.inc[i] ? pct(v / b.inc[i]) : '–'}</td>`).join('')}<td class="n">${pct((I - X) / I)}</td><td class="n"></td></tr>
     </tbody></table></div></section>
   <section class="card"><div class="card-h"><h3>סיכום רב־שנתי</h3></div>
     <div class="tbl-wrap"><table><thead><tr><th>שנה</th><th class="n">הכנסות</th><th class="n">הוצאות</th><th class="n">כסף פנוי</th><th class="n">שיעור חיסכון</th><th class="n">חודשים</th></tr></thead><tbody>
@@ -540,6 +554,23 @@ VIEWS.graphs.after = () => {
   chart('cLoans', {type:'bar', data:{labels:lm.map(lbl), datasets:[{label:'החזר הלוואות חודשי', data:lm.map(m => loans[m]), backgroundColor:pal(4)}]}});
 };
 
+const ICONS = {
+  shield:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  piggy:'<path d="M19 11c0-3.3-3.1-6-7-6S5 7.7 5 11c0 1.8.9 3.4 2.3 4.5L7 19h3l.5-1.5h3L14 19h3l-.3-3.4A5.6 5.6 0 0 0 19 11z"/><path d="M19 10h2"/><circle cx="15" cy="10" r=".8"/><path d="M10 6.5h4"/>',
+  chart:'<path d="M3 20h18"/><path d="M6 16l4-5 3 3 5-7"/><path d="M14 7h4v4"/>',
+  house:'<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+  person:'<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>',
+};
+function contactIcon(topic){
+  const t = topic || '';
+  if (/פורטוגל|חו"ל|ארה"?ב/.test(t) && /דיר|בתים|נדל/.test(t)) return ['globe', 'blue'];
+  if (/ביטוח/.test(t)) return ['shield', ''];
+  if (/פנסי|השתלמות|גמל/.test(t)) return ['piggy', 'gold'];
+  if (/קרן|השקע|תיק/.test(t)) return ['chart', 'gold'];
+  if (/בתים|דיר|נדל/.test(t)) return ['house', 'blue'];
+  return ['person', ''];
+}
 VIEWS.contacts = () => {
   const c = D().contacts, E = S.edit;
   return `
@@ -550,7 +581,7 @@ VIEWS.contacts = () => {
       <label class="field">טלפון ${inp(`contacts.${i}.phone`, 'text', 'inp')}</label>
       <label class="field">עדכונים ${inp(`contacts.${i}.notes`, 'text', 'inp')}</label>
       <button class="btn small danger" data-delc="${i}" type="button">מחיקה</button></div>` :
-    `<div class="contact"><b>${esc(x.name)}</b><div class="topic">${esc(x.topic)}</div>
+    `<div class="contact">${(([ic, cl]) => `<span class="c-ico ${cl}" aria-hidden="true"><svg viewBox="0 0 24 24">${ICONS[ic]}</svg></span>`)(contactIcon(x.topic))}<b>${esc(x.name)}</b><div class="topic">${esc(x.topic)}</div>
       <div class="phone"><span class="num" dir="ltr" style="user-select:all">${esc(x.phone)}</span>
         <a class="btn small" href="tel:${esc(x.phone.replace(/[^\d+]/g, ''))}">חיוג</a>
         <a class="btn small" href="https://wa.me/${esc(x.phone.replace(/[^\d]/g, ''))}" target="_blank" rel="noopener">וואטסאפ</a>
@@ -623,16 +654,18 @@ function openSettings(){
   const latest = yearsOf(d.expenses).pop(), next = String(+latest + 1);
   $('#settingsPanel').innerHTML = `
     <div class="row"><h2 style="font-size:20px;margin-inline-end:auto">הגדרות</h2><button class="btn ghost" data-close type="button">סגירה ✕</button></div>
-    ${demo ? '<p class="note">אתם במצב דמו. אפשר לשחק עם ההגדרות, אבל שום דבר לא נשמר.</p>' : ''}
+    ${demo ? '<p class="note"><b>מצב דמו.</b> אפשר לשחק ולשנות הכול – השינויים נשארים רק בדפדפן הזה עד היציאה, ולא נוגעים בנתונים האמיתיים של המשפחה.</p>' : ''}
     <section class="set-sec"><h3>שערי מטבע</h3><p>משמשים להמרת נכסים והתחייבויות במט״ח לשקלים.</p>
       <div class="row"><label class="field">דולר ($)<input class="inp" id="sUsd" inputmode="decimal" value="${d.rates.usd}"></label><label class="field">אירו (€)<input class="inp" id="sEur" inputmode="decimal" value="${d.rates.eur}"></label></div></section>
+    <section class="set-sec"><h3>שם המשפחה</h3><p>מוצג בראש התפריט ובכותרת הדפדפן.</p>
+      <label class="field">שם<input class="inp" id="sFam" value="${esc(d.settings.familyName || '')}"></label></section>
     <section class="set-sec"><h3>שמות בני הזוג</h3><p>משמשים לזיהוי שורות המשכורת בהכנסות ולגרפים.</p>
       <div class="row"><label class="field">בן/בת זוג 1<input class="inp" id="sP1" value="${esc(d.settings.people.p1)}"></label><label class="field">בן/בת זוג 2<input class="inp" id="sP2" value="${esc(d.settings.people.p2)}"></label></div></section>
     <section class="set-sec"><h3>הורשה לילדים</h3>
       <div class="row"><label class="field">תשואה שנתית (%)<input class="inp" id="sGrowth" inputmode="decimal" value="${((d.inheritance.growth - 1) * 100).toFixed(1)}"></label><label class="field">שנת סיום<input class="inp" id="sEnd" inputmode="numeric" value="${d.inheritance.endYear}"></label></div></section>
     <section class="set-sec"><h3>שנה חדשה</h3><p>יוצר את ${next} בהוצאות ובהכנסות עם אותן קטגוריות ואפסים בכל החודשים.</p>
       <div><button class="btn" id="sNewYear" type="button" ${d.expenses[next] ? 'disabled' : ''}>הוספת שנת ${next}</button></div></section>
-    <section class="set-sec"><h3>סנכרון עם GitHub</h3>
+    ${demo ? '' : `<section class="set-sec"><h3>סנכרון עם GitHub</h3>
       <p>הנתונים נשמרים מוצפנים בקובץ אחד במאגר. כדי לשמור ישירות מהדפדפן (גם מהטלפון), הזינו Personal Access Token עם הרשאת Contents: Read and write למאגר הזה בלבד. הפרטים נשמרים רק במכשיר הזה.</p>
       <div class="row"><label class="field">בעלים (owner)<input class="inp" id="gOwner" value="${esc(g.owner || '')}" dir="ltr"></label><label class="field">מאגר (repo)<input class="inp" id="gRepo" value="${esc(g.repo || '')}" dir="ltr"></label></div>
       <div class="row"><label class="field">ענף<input class="inp" id="gBranch" value="${esc(g.branch || 'main')}" dir="ltr"></label><label class="field">נתיב קובץ<input class="inp" id="gPath" value="${esc(g.path || 'data/data.enc.json')}" dir="ltr"></label></div>
@@ -640,7 +673,7 @@ function openSettings(){
       <div class="row"><button class="btn" id="gSave" type="button">שמירת פרטי חיבור</button><button class="btn" id="gTest" type="button">בדיקת חיבור</button><span id="gStatus"></span></div></section>
     <section class="set-sec"><h3>שינוי סיסמה</h3><p>הסיסמה החדשה תחול מהשמירה הבאה. שמרו אותה במקום בטוח – בלעדיה אי אפשר לפתוח את הנתונים.</p>
       <div class="row"><label class="field">סיסמה חדשה<input class="inp" id="sPw1" type="password" autocomplete="new-password"></label><label class="field">אימות<input class="inp" id="sPw2" type="password" autocomplete="new-password"></label></div>
-      <div><button class="btn" id="sPw" type="button" ${demo ? 'disabled' : ''}>עדכון סיסמה</button></div></section>
+      <div><button class="btn" id="sPw" type="button">עדכון סיסמה</button></div></section>`}
     <section class="set-sec"><h3>גיבוי</h3><p>הורדת קובץ הנתונים המוצפן (לשמירה ידנית במאגר), או ייבוא קובץ נתונים.</p>
       <div class="row"><button class="btn" id="sDl" type="button" ${demo ? 'disabled' : ''}>הורדת קובץ מוצפן</button>
         <label class="btn">ייבוא JSON<input type="file" id="sImp" accept=".json,application/json" hidden></label></div></section>
@@ -649,24 +682,27 @@ function openSettings(){
   $('#settings').hidden = false;
   const num = (id, fallback) => { const v = +$(id).value; return isNaN(v) ? fallback : v; };
   const apply = () => {
+    d.settings.familyName = $('#sFam').value.trim() || d.settings.familyName;
     d.rates.usd = num('#sUsd', d.rates.usd); d.rates.eur = num('#sEur', d.rates.eur);
     d.settings.people.p1 = $('#sP1').value.trim() || d.settings.people.p1; d.settings.people.p2 = $('#sP2').value.trim() || d.settings.people.p2;
     d.inheritance.growth = 1 + num('#sGrowth', (d.inheritance.growth - 1) * 100) / 100; d.inheritance.endYear = Math.max(d.inheritance.baseYear + 1, num('#sEnd', d.inheritance.endYear));
     markDirty(); render();
   };
-  ['#sUsd','#sEur','#sP1','#sP2','#sGrowth','#sEnd'].forEach(id => $(id).onchange = apply);
+  ['#sFam','#sUsd','#sEur','#sP1','#sP2','#sGrowth','#sEnd'].forEach(id => $(id).onchange = apply);
   $('#sNewYear').onclick = () => {
     d.expenses[next] = d.expenses[latest].map(gr => ({domain:gr.domain, items:gr.items.map(it => ({name:it.name, fixed:it.fixed, months:Array(12).fill(0)}))}));
     const li = yearsOf(d.incomes).pop(); d.incomes[next] = d.incomes[li].map(r => ({name:r.name, months:Array(12).fill(0)}));
     markDirty(); toast(`נוספה שנת ${next}`); openSettings(); render();
   };
   const readGh = () => ({owner:$('#gOwner').value.trim(), repo:$('#gRepo').value.trim(), branch:$('#gBranch').value.trim() || 'main', path:$('#gPath').value.trim() || 'data/data.enc.json', token:$('#gToken').value.trim()});
+  if (!demo) {
   $('#gSave').onclick = () => { store.set('github', readGh()); toast('פרטי החיבור נשמרו במכשיר'); };
   $('#gTest').onclick = async () => { store.set('github', readGh()); const st = $('#gStatus'); st.innerHTML = '<span class="pill muted">בודק…</span>';
     try { await ghRequest('GET'); st.innerHTML = '<span class="pill ok">מחובר ✓</span>'; } catch (e) { st.innerHTML = `<span class="pill dirty">${esc(e.message)} – בדקו שם מאגר וטוקן</span>`; } };
   $('#sPw').onclick = () => { const a = $('#sPw1').value, b = $('#sPw2').value;
     if (a.length < 8) return toast('סיסמה צריכה להכיל לפחות 8 תווים'); if (a !== b) return toast('הסיסמאות אינן זהות');
     S.password = a; markDirty(); toast('הסיסמה תתעדכן בשמירה הבאה'); };
+  }
   $('#sDl').onclick = async () => download(JSON.stringify(await encryptPayload(D(), S.password)), 'data.enc.json');
   $('#sImp').onchange = async ev => { const f = ev.target.files[0]; if (!f) return; try { let j = JSON.parse(await f.text()); if (j.ct) j = await decryptPayload(j, S.password); if (!j.expenses || !j.incomes) throw 0; S.data = normalize(j); markDirty(); toast('הנתונים יובאו'); closeSettings(); render(); } catch { toast('הקובץ לא נקרא – ודאו שזה קובץ נתונים תקין עם אותה סיסמה'); } };
   $$('[data-theme-set]').forEach(b => b.onclick = () => { const t = b.dataset.themeSet; if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; store.set('theme', t); render(); });
