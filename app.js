@@ -633,7 +633,7 @@ VIEWS.inherit = () => {
     ${h.history.map(r => `<tr><td class="sticky-col">${r.year} <span class="chip var">בפועל</span></td>${r.values.map(v => cell(v)).join('')}<td class="n">${money(sum(r.values))}</td></tr>`).join('')}
     ${years.map((y, yi) => `<tr ${yi === 0 ? 'class="total"' : ''}><td class="sticky-col">${y}${yi === 0 ? ' <span class="chip fixed">בסיס</span>' : ''}</td>${proj[yi].map((v, ii) => yi === 0 && S.edit ? `<td class="n">${inp(`inheritance.items.${ii}.base`)}</td>` : cell(v)).join('')}<td class="n">${money(sum(proj[yi]))}</td></tr>`).join('')}
     </tbody></table></div>
-    <p class="note">התוכן של עמוד זה עוד ייבנה יחד. כרגע: ערך בסיס לכל רכיב כפול תשואה שנתית קבועה. בשורה 27 באקסל מופיעים מספרים (3.5, 2.1, 2.9, 1.4, 0.6, 0.29) שלא ברור למה הם מתייחסים.</p>
+
   </section>`;
 };
 VIEWS.inherit.after = () => {
