@@ -301,7 +301,7 @@ VIEWS.total = () => {
     </section>
     <section class="card"><div class="card-h"><h3>התחייבויות</h3>${E ? '<button class="btn small" id="addLiab" type="button">+ התחייבות</button>' : ''}</div>
       <div class="tbl-wrap"><table><thead><tr><th>מקור התחייבות</th><th class="n">סכום</th><th class="n">מט״ח</th></tr></thead><tbody>
-      ${d.liabilities.map((l, i) => `<tr><td>${E ? inp(`liabilities.${i}.name`, 'text', 'wide') : esc(l.name)}</td>
+      ${d.liabilities.map((l, i) => `<tr><td>${E ? `<button class="xbtn" data-delliab="${i}" title="הסרת השורה" aria-label="הסרת השורה" type="button">✕</button>` + inp(`liabilities.${i}.name`, 'text', 'wide') : esc(l.name)}</td>
         <td class="n">${E && !l.foreign ? inp(`liabilities.${i}.value`) : money(liabValue(l))}</td>
         <td class="n">${l.foreign ? (E ? inp(`liabilities.${i}.foreign`) : money(l.foreign, {cur:l.currency === 'EUR' ? '€' : '$'})) : ''}</td></tr>`).join('')}
       <tr class="total"><td>סה״כ</td><td class="n">${money(t.liabilities)}</td><td></td></tr></tbody></table></div>
@@ -316,8 +316,8 @@ VIEWS.total = () => {
       const rows = d.assets.map((a, i) => ({a, i})).filter(x => x.a.group === g);
       if (!rows.length) return '';
       return rows.map(({a, i}) => `<tr>
-        <td class="sticky-col">${E ? inp(`assets.${i}.name`, 'text', 'wide') : esc(a.name)}</td>
-        <td>${esc(g)}</td>
+        <td class="sticky-col">${E ? `<button class="xbtn" data-delasset="${i}" title="הסרת השורה" aria-label="הסרת השורה" type="button">✕</button>` + inp(`assets.${i}.name`, 'text', 'wide') : esc(a.name)}</td>
+        <td>${E ? `<select class="cell" data-group="${i}">${d.assetGroups.map(x => `<option ${x === g ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>` : esc(g)}</td>
         <td class="n">${E && (!a.currency || a.currency === 'ILS') ? inp(`assets.${i}.value`).replace('<input', `<input data-touch="assets.${i}.updated"`) : money(assetValue(a))}</td>
         <td class="n">${a.currency && a.currency !== 'ILS' ? (E ? inp(`assets.${i}.foreign`).replace('<input', `<input data-touch="assets.${i}.updated"`) : money(a.foreign, {cur:a.currency === 'EUR' ? '€' : '$'})) + (a.fx ? ` <span class="chip var" title="שער ידני">×${a.fx}</span>` : '') : ''}</td>
         <td class="n">${a.buyPrice ? money(a.buyPrice) : ''}</td>
@@ -340,6 +340,9 @@ VIEWS.total.after = () => {
     if (e) Object.assign(e, row); else h.push(row);
     markDirty(); toast('תמונת המצב נוספה לגרף הצמיחה');
   };
+  $$('[data-group]').forEach(sel => sel.onchange = () => { D().assets[+sel.dataset.group].group = sel.value; markDirty(); rerenderKeep(); });
+  $$('[data-delasset]').forEach(b => b.onclick = () => { const arr = D().assets; removeRow(arr, +b.dataset.delasset, arr[+b.dataset.delasset].name); });
+  $$('[data-delliab]').forEach(b => b.onclick = () => { const arr = D().liabilities; removeRow(arr, +b.dataset.delliab, arr[+b.dataset.delliab].name); });
   const aa = $('#addAsset'); if (aa) aa.onclick = () => { D().assets.push({name:'נכס חדש', group:D().assetGroups[0], value:0, currency:'ILS', updated:''}); markDirty(); render(); };
   const al = $('#addLiab'); if (al) al.onclick = () => { D().liabilities.push({name:'התחייבות חדשה', value:0}); markDirty(); render(); };
 };
