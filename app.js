@@ -759,6 +759,7 @@ async function doLogin(user, pw){
   const th = store.get('theme'); if (th) document.documentElement.dataset.theme = th;
   $('#loginForm').onsubmit = e => { e.preventDefault(); doLogin($('#user').value, $('#pass').value); };
   $('#demoBtn').onclick = () => doLogin('demo', 'demo');
+  if (location.hash === '#demo') { history.replaceState(null, '', location.pathname); doLogin('demo', 'demo'); }
   $('#menuBtn').onclick = () => document.body.classList.toggle('nav-open');
   $('#scrim').onclick = () => document.body.classList.remove('nav-open');
   $('#settingsBtn').onclick = () => { document.body.classList.remove('nav-open'); openSettings(); };
