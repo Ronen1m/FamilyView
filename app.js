@@ -229,7 +229,8 @@ function buildNav(){
 function setYearSel(kind){
   const wrap = $('#yearWrap'), sel = $('#yearSel');
   if (!kind) { wrap.hidden = true; return; }
-  const ys = kind === 'inc' ? yearsOf(D().incomes) : kind === 'exp' ? yearsOf(D().expenses) : [...new Set([...yearsOf(D().incomes), ...yearsOf(D().expenses)])].sort();
+  const shown = y => +y >= (+D().settings.fromYear || 2024);
+  const ys = (kind === 'inc' ? yearsOf(D().incomes) : kind === 'exp' ? yearsOf(D().expenses) : [...new Set([...yearsOf(D().incomes), ...yearsOf(D().expenses)])].sort()).filter(shown);
   const cur = S.years[kind] && ys.includes(S.years[kind]) ? S.years[kind] : (ys.includes(String(new Date().getFullYear())) ? String(new Date().getFullYear()) : ys[ys.length-1]);
   S.years[kind] = cur;
   sel.innerHTML = ys.slice().reverse().map(y => `<option ${y === cur ? 'selected' : ''}>${y}</option>`).join('');
@@ -476,7 +477,7 @@ VIEWS.balance = () => {
   const y = S.years.bal, b = balanceYear(y);
   const act = dataMonths(y), n = act.length || 1;
   const I = sum(act.map(i => b.inc[i])), X = sum(act.map(i => b.exp[i]));
-  const allYears = [...new Set([...yearsOf(D().incomes), ...yearsOf(D().expenses)])].sort();
+  const allYears = [...new Set([...yearsOf(D().incomes), ...yearsOf(D().expenses)])].sort().filter(y => +y >= (+D().settings.fromYear || 2024));
   return `
   <div class="kpis">
     <div class="kpi"><span class="lbl">הכנסות ${y}</span><span class="val up">${money(I)}</span><span class="sub">ממוצע ${plain(I / n)} לחודש</span></div>
@@ -665,6 +666,8 @@ function openSettings(){
       <div class="row"><label class="field">בן/בת זוג 1<input class="inp" id="sP1" value="${esc(d.settings.people.p1)}"></label><label class="field">בן/בת זוג 2<input class="inp" id="sP2" value="${esc(d.settings.people.p2)}"></label></div></section>
     <section class="set-sec"><h3>הורשה לילדים</h3>
       <div class="row"><label class="field">תשואה שנתית (%)<input class="inp" id="sGrowth" inputmode="decimal" value="${((d.inheritance.growth - 1) * 100).toFixed(1)}"></label><label class="field">שנת סיום<input class="inp" id="sEnd" inputmode="numeric" value="${d.inheritance.endYear}"></label></div></section>
+    <section class="set-sec"><h3>שנים בפילטר</h3><p>השנים שמופיעות בבחירת השנה ובסיכום הרב־שנתי. הנתונים הישנים נשמרים.</p>
+      <label class="field">להציג החל משנת<select class="inp" id="sFrom">${[...new Set([...yearsOf(d.expenses), ...yearsOf(d.incomes)])].sort().map(y => `<option ${+y === (+d.settings.fromYear || 2024) ? 'selected' : ''}>${y}</option>`).join('')}</select></label></section>
     <section class="set-sec"><h3>שנה חדשה</h3><p>יוצר את ${next} בהוצאות ובהכנסות עם אותן קטגוריות ואפסים בכל החודשים.</p>
       <div><button class="btn" id="sNewYear" type="button" ${d.expenses[next] ? 'disabled' : ''}>הוספת שנת ${next}</button></div></section>
     ${demo ? '' : `<section class="set-sec"><h3>סנכרון עם GitHub</h3>
@@ -685,12 +688,13 @@ function openSettings(){
   const num = (id, fallback) => { const v = +$(id).value; return isNaN(v) ? fallback : v; };
   const apply = () => {
     d.settings.familyName = $('#sFam').value.trim() || d.settings.familyName;
+    d.settings.fromYear = +$('#sFrom').value;
     d.rates.usd = num('#sUsd', d.rates.usd); d.rates.eur = num('#sEur', d.rates.eur);
     d.settings.people.p1 = $('#sP1').value.trim() || d.settings.people.p1; d.settings.people.p2 = $('#sP2').value.trim() || d.settings.people.p2;
     d.inheritance.growth = 1 + num('#sGrowth', (d.inheritance.growth - 1) * 100) / 100; d.inheritance.endYear = Math.max(d.inheritance.baseYear + 1, num('#sEnd', d.inheritance.endYear));
     markDirty(); render();
   };
-  ['#sFam','#sUsd','#sEur','#sP1','#sP2','#sGrowth','#sEnd'].forEach(id => $(id).onchange = apply);
+  ['#sFam','#sFrom','#sUsd','#sEur','#sP1','#sP2','#sGrowth','#sEnd'].forEach(id => $(id).onchange = apply);
   $('#sNewYear').onclick = () => {
     d.expenses[next] = d.expenses[latest].map(gr => ({domain:gr.domain, items:gr.items.map(it => ({name:it.name, fixed:it.fixed, months:Array(12).fill(0)}))}));
     const li = yearsOf(d.incomes).pop(); d.incomes[next] = d.incomes[li].map(r => ({name:r.name, months:Array(12).fill(0)}));
