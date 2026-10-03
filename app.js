@@ -223,8 +223,9 @@ function removeRow(arr, idx, label){
 }
 function rerenderKeep(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
 function markDirty(){ if (S.mode === 'demo' && !canPublishDemo()) { if (!S.demoWarned) { toast('מצב דמו: השינויים זמניים ולא נשמרים'); S.demoWarned = true; } return; } S.dirty = true; $('#savebar').hidden = false; }
+const visiblePages = () => PAGES.filter(p => !(D().settings.hiddenTabs || []).includes(p.id));
 function buildNav(){
-  $('#nav').innerHTML = PAGES.map(p => `<button class="nav-btn" data-tab="${p.id}" type="button"><svg viewBox="0 0 24 24">${p.i}</svg>${p.t}</button>`).join('');
+  $('#nav').innerHTML = visiblePages().map(p => `<button class="nav-btn" data-tab="${p.id}" type="button"><svg viewBox="0 0 24 24">${p.i}</svg>${p.t}</button>`).join('');
   $$('#nav .nav-btn').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; location.hash = S.tab; document.body.classList.remove('nav-open'); render(); });
 }
 function setYearSel(kind){
@@ -240,7 +241,8 @@ function setYearSel(kind){
 }
 function render(){
   destroyCharts();
-  const p = PAGES.find(p => p.id === S.tab) || PAGES[0];
+  const p = visiblePages().find(p => p.id === S.tab) || visiblePages()[0];
+  S.tab = p.id;
   $$('#nav .nav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === p.id));
   $('#pageTitle').textContent = p.t;
   setYearSel(p.year);
