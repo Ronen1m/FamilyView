@@ -104,7 +104,9 @@ main{min-width:0;display:flex;flex-direction:column}
 .up{color:var(--pos)} .down{color:var(--neg)}
 .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
 .grid21{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:18px}
-.donut-row{display:grid;grid-template-columns:minmax(0,200px) minmax(0,1fr);gap:18px;align-items:center}
+.chart.pie{height:330px}
+.grid-assets{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:18px}
+.donut-row{display:grid;grid-template-columns:minmax(0,330px) minmax(0,1fr);gap:18px;align-items:center}
 .grid2>*{min-width:0}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px;display:grid;gap:12px;min-width:0;align-content:start}
 .card-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
@@ -167,7 +169,7 @@ td input.cell:focus{border-color:var(--accent);background:var(--surface)}
 .row>label.field{flex:1;min-width:120px}
 
 @media (max-width: 900px){
-  .grid2,.grid21{grid-template-columns:minmax(0,1fr)}
+  .grid2,.grid21,.grid-assets{grid-template-columns:minmax(0,1fr)}
 }
 @media (max-width: 760px){
   #app{grid-template-columns:minmax(0,1fr)}
@@ -186,7 +188,7 @@ td input.cell:focus{border-color:var(--accent);background:var(--surface)}
   .chart{height:250px} .chart.tall{height:290px}
   .hide-sm{display:none}
   .donut-row{grid-template-columns:minmax(0,1fr)}
-  .donut-row .chart{height:200px}
+  .donut-row .chart{height:280px}
 }
 #scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:44}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}

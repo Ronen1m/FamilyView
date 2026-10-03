@@ -207,8 +207,26 @@ function chart(id, cfg){
   };
   if (cfg.type === 'doughnut') { base.plugins.legend.display = false; base.cutout = '62%'; base.plugins.tooltip.callbacks = {label:c => ` ${c.label}: ${plain(c.parsed)}`}; delete base.interaction; }
   const opts = deepMerge(base, cfg.options || {});
-  S.charts.push(new Chart(el, {type:cfg.type, data:cfg.data, options:opts}));
+  const plugins = cfg.type === 'doughnut' && cfg.pctLabels ? [pctLabelPlugin] : [];
+  S.charts.push(new Chart(el, {type:cfg.type, data:cfg.data, options:opts, plugins}));
 }
+/* writes each slice's share on the doughnut (slices under 3% are skipped to stay readable) */
+const pctLabelPlugin = {
+  id:'pctLabels',
+  afterDatasetsDraw(ch){
+    const ds = ch.data.datasets[0], total = ds.data.reduce((a, b) => a + b, 0), meta = ch.getDatasetMeta(0), ctx = ch.ctx;
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    meta.data.forEach((arc, i) => {
+      const share = ds.data[i] / total; if (share < 0.03 || arc.hidden) return;
+      const {x, y} = arc.tooltipPosition();
+      ctx.font = `700 ${share > 0.1 ? 14 : 12}px ${css('--f-body') || 'sans-serif'}`;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.fillStyle = '#fff';
+      const t = Math.round(share * 100) + '%';
+      ctx.strokeText(t, x, y); ctx.fillText(t, x, y);
+    });
+    ctx.restore();
+  }
+};
 function deepMerge(a, b){ for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k])) a[k] = deepMerge(a[k] || {}, b[k]); else a[k] = b[k]; } return a; }
 
 /* ---------- UI shell ---------- */
@@ -292,10 +310,10 @@ VIEWS.total = () => {
     <div class="kpi"><span class="lbl">שווי התחייבויות כולל</span><span class="val down">${money(t.liabilities)}</span><span class="sub">${pct(t.liabilities / t.assets)} מהנכסים</span></div>
     <div class="kpi"><span class="lbl">שערי מטבע</span><span class="val" style="font-size:18px">$ ${d.rates.usd} · € ${d.rates.eur}</span><span class="sub">משמשים להמרת נכסים במט״ח (בהגדרות)</span></div>
   </div>
-  <div class="grid2">
+  <div class="grid-assets">
     <section class="card"><div class="card-h"><h3>נכסים לפי סוג</h3></div>
       <div class="donut-row">
-        <div class="chart short"><canvas id="cAssets"></canvas></div>
+        <div class="chart pie"><canvas id="cAssets"></canvas></div>
         <div class="legend-list">${byGroup.sort((a,b) => b.v - a.v).map((x, i) => `<div class="legend-row"><span class="sw" style="background:${pal(i)}"></span><span>${esc(x.g)}</span><span>${money(x.v, {short:true})}</span><span class="pct">${pct(x.v / t.assets)}</span></div>`).join('')}</div>
       </div>
     </section>
@@ -332,7 +350,7 @@ VIEWS.total = () => {
 VIEWS.total.after = () => {
   const d = D(), t = totals();
   const byGroup = d.assetGroups.map(g => ({g, v: sum(d.assets.filter(a => a.group === g).map(assetValue))})).filter(x => x.v).sort((a,b) => b.v - a.v);
-  chart('cAssets', {type:'doughnut', data:{labels:byGroup.map(x => x.g), datasets:[{data:byGroup.map(x => x.v), backgroundColor:byGroup.map((_, i) => pal(i)), borderColor:css('--surface'), borderWidth:2}]}});
+  chart('cAssets', {type:'doughnut', pctLabels:true, options:{cutout:'48%'}, data:{labels:byGroup.map(x => x.g), datasets:[{data:byGroup.map(x => x.v), backgroundColor:byGroup.map((_, i) => pal(i)), borderColor:css('--surface'), borderWidth:2}]}});
   $('#snapBtn').onclick = () => {
     const t = totals();
     const h = D().netWorthHistory, e = h.find(x => x.date === today());
