@@ -92,6 +92,7 @@ function normalize(d){
   return d;
 }
 const D = () => S.data;
+const fromYear = () => +D().settings.fromYear || (S.mode === 'demo' ? 2024 : 0); // demo shows 2024+, real data shows every year
 const yearsOf = obj => Object.keys(obj).sort();
 function assetValue(a){
   if (a.currency && a.currency !== 'ILS' && a.foreign) return a.foreign * (a.fx || D().rates[a.currency.toLowerCase()] || 1);
@@ -229,7 +230,7 @@ function buildNav(){
 function setYearSel(kind){
   const wrap = $('#yearWrap'), sel = $('#yearSel');
   if (!kind) { wrap.hidden = true; return; }
-  const shown = y => +y >= (+D().settings.fromYear || 2024);
+  const shown = y => +y >= fromYear();
   const ys = (kind === 'inc' ? yearsOf(D().incomes) : kind === 'exp' ? yearsOf(D().expenses) : [...new Set([...yearsOf(D().incomes), ...yearsOf(D().expenses)])].sort()).filter(shown);
   const cur = S.years[kind] && ys.includes(S.years[kind]) ? S.years[kind] : (ys.includes(String(new Date().getFullYear())) ? String(new Date().getFullYear()) : ys[ys.length-1]);
   S.years[kind] = cur;
@@ -477,7 +478,7 @@ VIEWS.balance = () => {
   const y = S.years.bal, b = balanceYear(y);
   const act = dataMonths(y), n = act.length || 1;
   const I = sum(act.map(i => b.inc[i])), X = sum(act.map(i => b.exp[i]));
-  const allYears = [...new Set([...yearsOf(D().incomes), ...yearsOf(D().expenses)])].sort().filter(y => +y >= (+D().settings.fromYear || 2024));
+  const allYears = [...new Set([...yearsOf(D().incomes), ...yearsOf(D().expenses)])].sort().filter(y => +y >= fromYear());
   return `
   <div class="kpis">
     <div class="kpi"><span class="lbl">הכנסות ${y}</span><span class="val up">${money(I)}</span><span class="sub">ממוצע ${plain(I / n)} לחודש</span></div>
@@ -667,7 +668,7 @@ function openSettings(){
     <section class="set-sec"><h3>הורשה לילדים</h3>
       <div class="row"><label class="field">תשואה שנתית (%)<input class="inp" id="sGrowth" inputmode="decimal" value="${((d.inheritance.growth - 1) * 100).toFixed(1)}"></label><label class="field">שנת סיום<input class="inp" id="sEnd" inputmode="numeric" value="${d.inheritance.endYear}"></label></div></section>
     <section class="set-sec"><h3>שנים בפילטר</h3><p>השנים שמופיעות בבחירת השנה ובסיכום הרב־שנתי. הנתונים הישנים נשמרים.</p>
-      <label class="field">להציג החל משנת<select class="inp" id="sFrom">${[...new Set([...yearsOf(d.expenses), ...yearsOf(d.incomes)])].sort().map(y => `<option ${+y === (+d.settings.fromYear || 2024) ? 'selected' : ''}>${y}</option>`).join('')}</select></label></section>
+      <label class="field">להציג החל משנת<select class="inp" id="sFrom">${[...new Set([...yearsOf(d.expenses), ...yearsOf(d.incomes)])].sort().map((y, i, a) => `<option ${+y === fromYear() || (!fromYear() && i === 0) ? 'selected' : ''}>${y}</option>`).join('')}</select></label></section>
     <section class="set-sec"><h3>שנה חדשה</h3><p>יוצר את ${next} בהוצאות ובהכנסות עם אותן קטגוריות ואפסים בכל החודשים.</p>
       <div><button class="btn" id="sNewYear" type="button" ${d.expenses[next] ? 'disabled' : ''}>הוספת שנת ${next}</button></div></section>
     ${demo ? '' : `<section class="set-sec"><h3>סנכרון עם GitHub</h3>
