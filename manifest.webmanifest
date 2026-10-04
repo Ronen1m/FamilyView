@@ -1,11 +1,11 @@
 {
- "id": "/FamilyView/?app=family-finance",
+ "id": "/FamilyView/?app=familyview-v2",
  "name": "ניתוח פיננסי משפחתי",
  "short_name": "כלכלת המשפחה",
  "description": "דשבורד פיננסי משפחתי – הכנסות, הוצאות וצמיחה",
  "lang": "he",
  "dir": "rtl",
- "start_url": "/FamilyView/",
+ "start_url": "/FamilyView/?source=app",
  "scope": "/FamilyView/",
  "display": "standalone",
  "orientation": "any",

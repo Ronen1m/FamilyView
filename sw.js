@@ -1,6 +1,6 @@
 /* Makes the dashboard installable and lets it open without internet.
    Always tries the network first (so updates show immediately) and falls back to the last saved copy. */
-const CACHE = 'familyview-v1';
+const CACHE = 'familyview-v2';
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', e => {
