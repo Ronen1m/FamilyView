@@ -205,6 +205,9 @@ body{background:radial-gradient(900px 420px at 100% -8%,var(--glow),transparent 
 #rail .nav-btn:hover{background:rgba(255,255,255,.07);color:#fff}
 #rail .nav-btn.active{background:rgba(255,255,255,.12);color:#fff;box-shadow:inset -3px 0 0 var(--gold)}
 #rail .rail-foot{border-top-color:rgba(255,255,255,.1)}
+.nav-sec{margin:14px 10px 4px;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;font-weight:700;letter-spacing:.02em;color:var(--muted)}
+#rail .nav-sec{border-top-color:rgba(255,255,255,.1);color:var(--gold)}
+details>summary{cursor:pointer}
 #topbar{background:color-mix(in srgb,var(--bg) 72%,transparent);border-bottom-color:transparent}
 .card,.kpi,.contact,.set-sec{border-color:color-mix(in srgb,var(--line) 70%,transparent);box-shadow:var(--shadow)}
 .kpi{position:relative;overflow:hidden}
@@ -300,7 +303,9 @@ td.x-col{width:28px;padding-inline:4px}
 <div class="toast" id="toast" hidden></div>
 
 <script src="vendor/chart.umd.js"></script>
-<script>/* load the newest app code every time (GitHub Pages caches files for ~10 minutes) */
-(function(){var s=document.createElement("script");s.src="app.js?v="+Date.now();document.body.appendChild(s);})();</script>
+<script src="vendor/xlsx.full.min.js"></script>
+<script>/* load the newest app code every time (GitHub Pages caches files for ~10 minutes); import.js needs app.js first */
+(function(){var v=Date.now();function add(src,next){var s=document.createElement("script");s.src=src+"?v="+v;if(next)s.onload=next;document.body.appendChild(s);}
+add("app.js",function(){add("import.js");});})();</script>
 </body>
 </html>

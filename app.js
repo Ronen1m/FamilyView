@@ -15,6 +15,9 @@ const PAGES = [
   {id:'contacts',t:'אנשי קשר',             i:'<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>'},
   {id:'inherit', t:'הורשה לילדים',         i:'<path d="M12 22V12"/><path d="M12 12C12 7 8 5 4 5c0 4 3 7 8 7z"/><path d="M12 12c0-5 4-7 8-7 0 4-3 7-8 7z"/>'},
   {id:'pt',      t:'פורטוגל',              i:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>'},
+  {id:'upBank',  t:'העלאת מסמך בנק',        sec:'עדכון נתונים', i:'<path d="M3 10l9-6 9 6"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 21h18"/>'},
+  {id:'upCard',  t:'העלאת מסמך אשראי',      sec:'עדכון נתונים', i:'<rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 10h19"/><path d="M6 15h4"/>'},
+  {id:'upPen',   t:'העלאת מסמך פנסיה וקרנות', sec:'עדכון נתונים', i:'<path d="M12 2v6"/><path d="M9 5l3 3 3-3"/><path d="M5 12h14v8H5z"/><path d="M9 16h6"/>'},
 ];
 
 const S = {data:null, mode:null, password:null, dirty:false, tab:'total', years:{}, edit:false, charts:[], closed:{}};
@@ -87,6 +90,7 @@ async function loadEncrypted(){
 function normalize(d){
   for (const a of d.assets) { if (a.currency === 'EUR_X4') a.currency = 'EUR'; delete a.fx; }
   d.expenseTotalsOverride ||= {};
+  d.imports ||= {log:[], rules:[]};
   d.settings ||= {}; d.settings.people ||= {p1:'רונן', p2:'טל'};
   for (const c of d.risk?.coverage || []) if (c.people['אפיר']) { c.people['אופיר'] = c.people['אפיר']; delete c.people['אפיר']; }
   return d;
@@ -243,7 +247,8 @@ function rerenderKeep(){ const y = window.scrollY; render(); window.scrollTo(0, 
 function markDirty(){ if (S.mode === 'demo' && !canPublishDemo()) { if (!S.demoWarned) { toast('מצב דמו: השינויים זמניים ולא נשמרים'); S.demoWarned = true; } return; } S.dirty = true; $('#savebar').hidden = false; }
 const visiblePages = () => PAGES.filter(p => !(D().settings.hiddenTabs || []).includes(p.id));
 function buildNav(){
-  $('#nav').innerHTML = visiblePages().map(p => `<button class="nav-btn" data-tab="${p.id}" type="button"><svg viewBox="0 0 24 24">${p.i}</svg>${p.t}</button>`).join('');
+  let sec = '';
+  $('#nav').innerHTML = visiblePages().map(p => { const h = p.sec && p.sec !== sec ? `<div class="nav-sec">${p.sec}</div>` : ''; sec = p.sec || ''; return h + `<button class="nav-btn" data-tab="${p.id}" type="button"><svg viewBox="0 0 24 24">${p.i}</svg>${p.t}</button>`; }).join('');
   $$('#nav .nav-btn').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; location.hash = S.tab; document.body.classList.remove('nav-open'); render(); });
 }
 function setYearSel(kind){
@@ -264,6 +269,7 @@ function render(){
   $$('#nav .nav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === p.id));
   $('#pageTitle').textContent = p.t;
   setYearSel(p.year);
+  $('#editBtn').hidden = !!p.sec;
   document.body.classList.toggle('edit-on', S.edit);
   $('#modePill').innerHTML = S.mode === 'demo' ? `<span class="pill demo">דמו · נתונים בדויים${canPublishDemo() ? ' · שמירה לכולם' : ''}</span>` : '';
   $('#updatedLbl').textContent = 'עודכן: ' + (D().meta.updated || '');
