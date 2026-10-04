@@ -617,6 +617,13 @@ function contactIcon(topic){
   if (/בתים|דיר|נדל/.test(t)) return ['house', 'blue'];
   return ['person', ''];
 }
+/* "חיוג" only makes sense on a phone – on a PC the browser looks for a calling app that isn't there */
+const isPhone = () => matchMedia('(pointer: coarse)').matches && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+function intlPhone(p, plus){ // 054-123… → 97254123… ; 512-909-3943 (US) → 15129093943
+  let d = String(p || '').replace(/[^\d]/g, '');
+  if (String(p).trim().startsWith('+')) {} else if (d.startsWith('0')) d = '972' + d.slice(1); else if (d.length === 10) d = '1' + d;
+  return (plus ? '+' : '') + d;
+}
 VIEWS.contacts = () => {
   const c = D().contacts, E = S.edit;
   return `
@@ -629,8 +636,8 @@ VIEWS.contacts = () => {
       <button class="btn small danger" data-delc="${i}" type="button">מחיקה</button></div>` :
     `<div class="contact">${(([ic, cl]) => `<span class="c-ico ${cl}" aria-hidden="true"><svg viewBox="0 0 24 24">${ICONS[ic]}</svg></span>`)(contactIcon(x.topic))}<b>${esc(x.name)}</b><div class="topic">${esc(x.topic)}</div>
       <div class="phone"><span class="num" dir="ltr" style="user-select:all">${esc(x.phone)}</span>
-        <a class="btn small" href="tel:${esc(x.phone.replace(/[^\d+]/g, ''))}">חיוג</a>
-        <a class="btn small" href="https://wa.me/${esc(x.phone.replace(/[^\d]/g, ''))}" target="_blank" rel="noopener">וואטסאפ</a>
+        ${isPhone() ? `<a class="btn small" href="tel:${esc(intlPhone(x.phone, true))}">חיוג</a>` : ''}
+        <a class="btn small" href="https://wa.me/${esc(intlPhone(x.phone))}" target="_blank" rel="noopener">וואטסאפ</a>
         <button class="btn small" data-copy="${esc(x.phone)}" type="button">העתקה</button></div>
       ${x.notes ? `<div class="notes">${esc(x.notes)}</div>` : ''}</div>`).join('')}</div>`;
 };
