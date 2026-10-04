@@ -314,8 +314,8 @@ VIEWS.total = () => {
     <div class="kpi hero"><span class="lbl">שווי משפחתי נטו</span><span class="val">${money(t.net)}</span><span class="sub">${last ? `${delta >= 0 ? '▲' : '▼'} ${plain(Math.abs(delta))} מאז תמונת המצב של ${last.date}` : ''}</span></div>
     <div class="kpi"><span class="lbl">שווי משפחתי מלא (נכסים)</span><span class="val">${money(t.assets)}</span><span class="sub">${d.assets.length} נכסים</span></div>
     <div class="kpi"><span class="lbl">שווי התחייבויות כולל</span><span class="val down">${money(t.liabilities)}</span><span class="sub">${pct(t.liabilities / t.assets)} מהנכסים</span></div>
-    <div class="kpi"><span class="lbl">שערי מטבע</span><span class="val" style="font-size:18px">$ ${d.rates.usd} · € ${d.rates.eur}</span><span class="sub">משמשים להמרת נכסים במט״ח (בהגדרות)</span></div>
   </div>
+  <div class="rate-strip"><span class="rs-lbl">שערי מטבע</span><span class="num" dir="ltr">$ ${d.rates.usd}</span><span class="rs-dot">·</span><span class="num" dir="ltr">€ ${d.rates.eur}</span><span class="rs-hint">משמשים להמרת נכסים והתחייבויות במט״ח</span><button class="btn small ghost" type="button" data-open-settings>שינוי</button></div>
   <div class="grid-assets">
     <section class="card"><div class="card-h"><h3>נכסים לפי סוג</h3></div>
       <div class="donut-row">
@@ -357,6 +357,7 @@ VIEWS.total.after = () => {
   const d = D(), t = totals();
   const byGroup = d.assetGroups.map(g => ({g, v: sum(d.assets.filter(a => a.group === g).map(assetValue))})).filter(x => x.v).sort((a,b) => b.v - a.v);
   chart('cAssets', {type:'doughnut', pctLabels:true, options:{cutout:'48%'}, data:{labels:byGroup.map(x => x.g), datasets:[{data:byGroup.map(x => x.v), backgroundColor:byGroup.map((_, i) => pal(i)), borderColor:css('--surface'), borderWidth:2}]}});
+  $$('[data-open-settings]').forEach(b => b.onclick = openSettings);
   $('#snapBtn').onclick = () => {
     const t = totals();
     const h = D().netWorthHistory, e = h.find(x => x.date === today());
