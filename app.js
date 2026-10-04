@@ -315,7 +315,6 @@ VIEWS.total = () => {
     <div class="kpi"><span class="lbl">שווי משפחתי מלא (נכסים)</span><span class="val">${money(t.assets)}</span><span class="sub">${d.assets.length} נכסים</span></div>
     <div class="kpi"><span class="lbl">שווי התחייבויות כולל</span><span class="val down">${money(t.liabilities)}</span><span class="sub">${pct(t.liabilities / t.assets)} מהנכסים</span></div>
   </div>
-  <div class="rate-strip"><span class="rs-lbl">שערי מטבע</span><span class="num" dir="ltr">$ ${d.rates.usd}</span><span class="rs-dot">·</span><span class="num" dir="ltr">€ ${d.rates.eur}</span><span class="rs-hint">משמשים להמרת נכסים והתחייבויות במט״ח</span><button class="btn small ghost" type="button" data-open-settings>שינוי</button></div>
   <div class="grid-assets">
     <section class="card"><div class="card-h"><h3>נכסים לפי סוג</h3></div>
       <div class="donut-row">
@@ -351,7 +350,8 @@ VIEWS.total = () => {
     }).join('')}
     <tr class="total"><td class="sticky-col">סה״כ נכסים</td><td></td><td class="n">${money(t.assets)}</td><td colspan="5"></td></tr>
     </tbody></table></div>
-  </section>`;
+  </section>
+  <div class="rate-strip"><span class="rs-lbl">שערי מטבע</span><span class="num" dir="ltr">$ ${d.rates.usd}</span><span class="rs-dot">·</span><span class="num" dir="ltr">€ ${d.rates.eur}</span><span class="rs-hint">משמשים להמרת נכסים והתחייבויות במט״ח</span><button class="btn small ghost" type="button" data-open-settings>שינוי</button></div>`;
 };
 VIEWS.total.after = () => {
   const d = D(), t = totals();
