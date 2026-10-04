@@ -1,0 +1,16 @@
+{
+  "id": "/FamilyView/?app=family-finance",
+  "name": "כלכלת המשפחה",
+  "short_name": "כלכלת המשפחה",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "/FamilyView/",
+  "scope": "/FamilyView/",
+  "display": "standalone",
+  "background_color": "#0a1411",
+  "theme_color": "#0f3f37",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
