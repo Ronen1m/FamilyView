@@ -6,11 +6,12 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#0f3f37">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='13' fill='%230e7a66'/%3E%3Crect x='9' y='29' width='8' height='10' rx='2' fill='%23f2c14e'/%3E%3Crect x='20' y='23' width='8' height='16' rx='2' fill='%23f2c14e'/%3E%3Crect x='31' y='16' width='8' height='23' rx='2' fill='%23f2c14e'/%3E%3Cpath d='M8 24.5l9.5-7.5 6 4 12-11M30 10h5.6v5.6' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="כלכלת המשפחה">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
 <title>ניתוח פיננסי משפחתי</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=Rubik:wght@500;600;700&display=swap">
@@ -309,6 +310,7 @@ td.x-col{width:28px;padding-inline:4px}
 <script src="vendor/xlsx.full.min.js"></script>
 <script>/* load the newest app code every time (GitHub Pages caches files for ~10 minutes); import.js needs app.js first */
 (function(){var v=Date.now();function add(src,next){var s=document.createElement("script");s.src=src+"?v="+v;if(next)s.onload=next;document.body.appendChild(s);}
-add("app.js",function(){add("import.js");});})();</script>
+add("app.js",function(){add("import.js");});})();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});</script>
 </body>
 </html>
