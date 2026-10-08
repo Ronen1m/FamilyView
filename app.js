@@ -659,8 +659,8 @@ VIEWS.inherit = () => {
     <div class="kpi"><span class="lbl">תשואה שנתית מונחת</span><span class="val">${pct(g - 1)}</span><span class="sub">ניתן לשינוי בהגדרות</span></div>
     <div class="kpi"><span class="lbl">מכפיל לאורך התקופה</span><span class="val">×${(sum(last) / sum(proj[0])).toFixed(2)}</span><span class="sub">${h.endYear - h.baseYear} שנים</span></div>
   </div>
-  <section class="card"><div class="card-h"><h3>תחזית צבירה</h3><span class="hint">ערכי בסיס ${h.baseYear} כפי שהוזנו ידנית באקסל</span></div><div class="chart tall"><canvas id="cInh"></canvas></div></section>
-  <section class="card"><div class="card-h"><h3>טבלת תחזית</h3></div>
+  <section class="card"><div class="card-h"><h3>תחזית צבירה</h3><span class="hint">${h.syncedAt ? `ערכי בסיס ${h.baseYear} עודכנו ממבט כולל ב־${esc(h.syncedAt)}` : `ערכי בסיס ${h.baseYear} כפי שהוזנו ידנית באקסל`}</span></div><div class="chart tall"><canvas id="cInh"></canvas></div></section>
+  <section class="card"><div class="card-h"><h3>טבלת תחזית</h3><button class="btn small" id="inhSync" type="button" title="מעדכן את ערכי הבסיס לפי פירוט הנכסים במבט הכולל">⟳ עדכן נתונים</button></div>
     <div class="tbl-wrap" style="max-height:60vh"><table><thead><tr><th class="sticky-col">שנה</th>${h.items.map(it => `<th class="n">${esc(it.name)}</th>`).join('')}<th class="n">סה״כ</th></tr></thead><tbody>
     ${h.history.map(r => `<tr><td class="sticky-col">${r.year} <span class="chip var">בפועל</span></td>${r.values.map(v => cell(v)).join('')}<td class="n">${money(sum(r.values))}</td></tr>`).join('')}
     ${years.map((y, yi) => `<tr ${yi === 0 ? 'class="total"' : ''}><td class="sticky-col">${y}${yi === 0 ? ' <span class="chip fixed">בסיס</span>' : ''}</td>${proj[yi].map((v, ii) => yi === 0 && S.edit ? `<td class="n">${inp(`inheritance.items.${ii}.base`)}</td>` : cell(v)).join('')}<td class="n">${money(sum(proj[yi]))}</td></tr>`).join('')}
@@ -668,7 +668,37 @@ VIEWS.inherit = () => {
 
   </section>`;
 };
+// which asset in "מבט כולל" feeds each inheritance item (pension / study fund per person, local / foreign trading account)
+function inhSource(it){
+  const n = it.name, A = D().assets;
+  if (/פנסי/.test(n) || /השתלמות/.test(n)) {
+    const pen = /פנסי/.test(n), grp = pen ? /פנסי/ : /השתלמות/;
+    const who = n.replace(/פנסי[יה]*|קרן|השתלמות/g, '').trim();
+    return A.find(a => grp.test(a.group || '') && who && a.name.includes(who));
+  }
+  if (/תיק|IBI|IBKR|מסחר/i.test(n)) {
+    const foreign = /IBKR|ארה|חו"?ל|US/i.test(n);
+    const c = A.filter(a => /מסחר/.test(a.group || ''));
+    return c.find(a => foreign ? (a.currency && a.currency !== 'ILS') : (!a.currency || a.currency === 'ILS'));
+  }
+  return null;
+}
+function syncInheritance(){
+  const h = D().inheritance, before = JSON.parse(JSON.stringify(h)), y = new Date().getFullYear();
+  if (y > h.baseYear) { // last year's base becomes an "actual" row; the new base is this year
+    if (!h.history.some(r => r.year === h.baseYear)) h.history.push({year:h.baseYear, values:h.items.map(it => it.base)});
+    h.baseYear = y; if (h.endYear <= y) h.endYear = y + 1;
+  }
+  const done = [], miss = [];
+  h.items.forEach(it => { const a = inhSource(it); if (a) { it.base = Math.round(assetValue(a)); it.src = a.name; done.push(it); } else miss.push(it.name); });
+  if (!done.length) { toast('לא נמצאו נכסים מתאימים במבט כולל'); return; }
+  h.syncedAt = new Date().toLocaleDateString('he-IL');
+  markDirty(); rerenderKeep();
+  const diff = sum(h.items.map(i => i.base)) - sum(before.items.map(i => i.base));
+  toast(`עודכנו ${done.length} ערכים (${diff >= 0 ? '+' : '−'}${plain(Math.abs(diff))})${miss.length ? ` · לא נמצא: ${miss.join(', ')}` : ''}`, 0, () => { D().inheritance = before; rerenderKeep(); });
+}
 VIEWS.inherit.after = () => {
+  const sb = $('#inhSync'); if (sb) sb.onclick = syncInheritance;
   const h = D().inheritance, years = [];
   for (let y = h.baseYear; y <= h.endYear; y++) years.push(y);
   chart('cInh', {type:'line', stacked:true, data:{labels:years, datasets:h.items.map((it, i) => ({label:it.name, data:years.map(y => it.base * Math.pow(h.growth, y - h.baseYear)), borderColor:pal(i), backgroundColor:pal(i) + '55', fill:true, pointRadius:0, tension:.2}))}});
