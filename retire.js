@@ -77,40 +77,49 @@ function pensionNow(i){ const p = [D().settings.people.p1, D().settings.people.p
 function simulate(r, R){
   const y0 = +nearYear(), rr = r.realReturn / 100, rp = r.pensionReturn / 100, mi = r.mortRate / 100;
   const tax = 1 - (r.cgt / 100) * (r.gainShare / 100);
-  let P = liquidNow(r);
+  const P0 = liquidNow(r);
+  let P = P0, saved = 0, drawn = 0, surplus = 0, growthAfter = 0, payoff = 0;
   const pen = [{bal:pensionNow(0), monthly:0, ...r.pen1, birth:r.birth1}, {bal:pensionNow(1), monthly:0, ...r.pen2, birth:r.birth2}];
   const bl = [{...r.bl1, birth:r.birth1}, {...r.bl2, birth:r.birth2}];
-  const props = r.props.filter(p => p.use).map(p => ({...p, bal:+p.mortgage || 0}));
-  const rows = []; let fail = null, mortFree = null, atRetire = null;
+  const props = r.props.filter(p => p.use).map(p => ({...p, bal:+p.mortgage || 0, end:(+p.mortgage || 0) > 0 ? null : 'none'}));
+  const rows = []; let fail = null, atRetire = null, startP = null;
   const endYear = r.birth1 + r.endAge;
   for (let y = y0; y <= endYear; y++) {
     const working = y < R;
-    if (y === R && r.payoffAtRetire) { const owe = sum(props.map(p => p.bal)); P -= owe; props.forEach(p => p.bal = 0); }
-    let mortPay = 0;
-    for (const p of props) if (p.bal > 0 && p.payment > 0) { const due = p.bal * (1 + mi); const pay = Math.min(due, p.payment * 12); p.bal = Math.max(0, due - pay); mortPay += pay; }
-    if (mortFree == null && props.every(p => p.bal <= 0 || !p.payment)) mortFree = y;
+    if (y === R) startP = P;
+    if (y === R && r.payoffAtRetire) { payoff = sum(props.map(p => p.bal)); P -= payoff; props.forEach(p => { if (p.bal > 0) { p.bal = 0; p.end = y; } }); }
+    let mortPay = 0; const payBy = {};
+    for (const p of props) if (p.bal > 0 && p.payment > 0) {
+      const due = p.bal * (1 + mi), pay = Math.min(due, p.payment * 12);
+      p.bal = Math.max(0, due - pay); mortPay += pay; payBy[p.name] = pay;
+      if (p.bal <= 0 && !p.end) p.end = y;
+    }
     const rentGross = sum(props.map(p => (+p.rent || 0) * 12)), costs = sum(props.map(p => (+p.costs || 0) * 12));
-    const rentNet = rentGross * (1 - r.rentTax / 100) - costs - mortPay;
-    let pension = 0, natIns = 0;
-    pen.forEach(p => {
+    const rentTaxAmt = rentGross * r.rentTax / 100;
+    const rentNet = rentGross - rentTaxAmt - costs - mortPay;
+    let pension = 0, natIns = 0; const penBy = [0, 0], blBy = [0, 0];
+    pen.forEach((p, i) => {
       const age = y - p.birth;
       if (age < p.age) { if (working) p.bal += p.deposit * 12; p.bal *= 1 + rp; }
-      else { if (!p.monthly) p.monthly = p.bal / p.coef; pension += p.monthly * 12; }
+      else { if (!p.monthly) p.monthly = p.bal / p.coef; pension += p.monthly * 12; penBy[i] = p.monthly * 12; }
     });
-    bl.forEach(b => { if (y - b.birth >= b.age) natIns += b.amount * 12; });
+    bl.forEach((b, i) => { if (y - b.birth >= b.age) { natIns += b.amount * 12; blBy[i] = b.amount * 12; } });
     const other = (+r.other || 0) * 12, want = r.desired * 12;
     let draw = 0;
-    if (working) { P += r.savings * 12; }
+    if (working) { P += r.savings * 12; saved += r.savings * 12; }
     else {
       const gap = want - (rentNet + pension + natIns + other);
-      if (gap > 0) { draw = gap / tax; P -= draw; } else P -= gap;
+      if (gap > 0) { draw = gap / tax; P -= draw; drawn += draw; } else { P -= gap; surplus += -gap; }
     }
-    if (y === R) atRetire = {P, rentNet, pension, natIns, other};
+    if (y === R) atRetire = {P:startP, rentGross, rentTaxAmt, costs, mortPay, payBy, rentNet, pension, penBy, natIns, blBy, other, gap:want - (rentNet + pension + natIns + other)};
     if (P < 0 && fail == null && !working) fail = y;
     rows.push({y, age1:y - r.birth1, age2:y - r.birth2, working, P:Math.max(P, 0), rentNet, pension, natIns, other, draw:working ? 0 : Math.min(draw, draw + Math.min(P, 0)), want, mortBal:sum(props.map(p => p.bal))});
-    P *= 1 + rr;
+    const g = P * rr; if (!working) growthAfter += g; P += g;
   }
-  return {rows, fail, mortFree, atRetire, ok:fail == null};
+  const ends = props.filter(p => +p.mortgage > 0).map(p => ({name:p.name, end:p.payment > 0 || p.end ? p.end : null, noPay:!p.payment && p.end !== R}));
+  const known = ends.filter(e => e.end).map(e => e.end);
+  const mortFree = known.length ? Math.max(...known) : null;
+  return {rows, fail, mortFree, ends, atRetire, ok:fail == null, P0, saved, drawn, surplus, growthAfter, payoff, startP, endP:rows.length ? rows[rows.length - 1].P : 0};
 }
 function earliest(r){
   const y0 = +nearYear(), last = r.birth1 + 67;
@@ -119,6 +128,49 @@ function earliest(r){
 }
 
 /* ---------- view ---------- */
+
+const RET_INFO = {open:null};
+const ib = key => `<button class="info-btn ${RET_INFO.open === key ? 'on' : ''}" data-info="${key}" type="button" title="מה זה ואיך מחושב" aria-label="הסבר">!</button>`;
+function mortSub(sim){
+  const k = sim.ends.filter(e => e.end).sort((a, b) => a.end - b.end), miss = sim.ends.filter(e => !e.end);
+  if (!sim.ends.length) return 'אין משכנתאות';
+  const parts = k.map(e => `${e.name} ${e.end}`);
+  return (parts.length > 1 ? 'לפי נכס: ' : '') + parts.join(' · ') + (miss.length ? ` · ${miss.map(e => e.name).join(', ')}: חסר החזר` : '');
+}
+function infoTitle(k, R){ return {best:'פרישה מוקדמת אפשרית – איך נקבעת השנה', check:`בדיקת פרישה ב־${R} – מה המשמעות`, passive:`הכנסה פסיבית ב־${R} – מאיפה מגיע הכסף`, liquid:'מה זה התיק הנזיל ומאיפה הסכום', mort:'מתי נגמרות המשכנתאות'}[k]; }
+function infoBody(k, r, R, best, sim){
+  const at = sim.atRetire || {}, p1 = D().settings.people.p1, p2 = D().settings.people.p2, m = v => plain(v / 12), row = (a, b, cls = '') => `<tr class="${cls}"><td>${a}</td><td class="n">${b}</td></tr>`;
+  const tbl = rows => `<div class="tbl-wrap"><table><tbody>${rows}</tbody></table></div>`;
+  if (k === 'best') return `<p class="info-p">בודקים כל שנה, מהיום ועד ש${esc(p1)} בן 67, ומריצים את כל התוכנית קדימה עד גיל ${r.endAge}. השנה המוקדמת היא <b>הראשונה שבה התיק הנזיל לא מתרוקן אף פעם</b> – כלומר כל שנה, השכירות נטו + הקצבאות + ההכנסות הנוספות, יחד עם משיכה מהתיק, מכסים את היעד של ${plain(r.desired)} לחודש.</p>
+    <p class="info-p">מה מקדים את השנה: יעד נמוך יותר, חיסכון חודשי גבוה יותר, תשואה גבוהה יותר, סיום מוקדם של משכנתאות. מה מאחר: יעד גבוה, תחילת קצבה מאוחרת, נכסים שלא מסומנים כנזילים.</p>
+    ${best ? `<p class="info-p">התוצאה כרגע: <b>${best}</b> – ${esc(p1)} בגיל ${best - r.birth1}, ${esc(p2)} בגיל ${best - r.birth2}.</p>` : ''}`;
+  if (k === 'check') return `<p class="info-p"><b>"הכסף מספיק"</b> = אם פורשים ב־${R}, בכל שנה עד גיל ${r.endAge} יש מספיק כסף ליעד של ${plain(r.desired)} לחודש, והתיק הנזיל לא יורד מתחת לאפס. <b>"נשאר"</b> = כמה יישאר בתיק הנזיל בגיל ${r.endAge}, בכסף של היום. זה בנוסף לדירות, שנשארות בבעלותכם (ולא נמכרות בחישוב).</p>
+    ${tbl(row('תיק נזיל בתחילת ' + R, plain(sim.startP)) + (sim.payoff ? row('סילוק משכנתאות בפרישה', '−' + plain(sim.payoff)) : '') + row('נמשך מהתיק לאורך השנים (כולל מס רווחי הון)', '−' + plain(sim.drawn)) + row('עודפים שהוחזרו לתיק (שנים שההכנסה הפסיבית גבוהה מהיעד)', '+' + plain(sim.surplus)) + row(`תשואה ריאלית של ${r.realReturn}% בשנה`, '+' + plain(sim.growthAfter)) + row(`נשאר בגיל ${r.endAge}`, plain(sim.endP), 'total'))}
+    <p class="info-p hint">מגיל הקצבה ההכנסה הפסיבית בדרך כלל גבוהה מהיעד, ולכן התיק חוזר לגדול – זה מה שיוצר את הסכום הגדול בסוף. אם רוצים לחיות על יותר, מעלים את היעד.</p>`;
+  if (k === 'passive') {
+    const pr = Object.entries(at.payBy || {}).map(([n, v]) => row('&nbsp;&nbsp;החזר משכנתא – ' + esc(n), '−' + m(v))).join('');
+    return `<p class="info-p">הכנסה שמגיעה בלי לעבוד, בחודש ממוצע של ${R}. ההפרש עד היעד נמשך מהתיק הנזיל (ראו "תיק נזיל").</p>
+    ${tbl(row('שכירות ברוטו (כל הנכסים המסומנים)', m(at.rentGross)) + row(`מס על שכירות ${r.rentTax}%`, '−' + m(at.rentTaxAmt)) + row('הוצאות שוטפות של הדירות', '−' + m(at.costs)) + pr + row('<b>שכירות נטו</b>', m(at.rentNet)) +
+      row('קצבת פנסיה – ' + esc(p1), at.penBy[0] ? m(at.penBy[0]) : `מגיל ${r.pen1.age}`) + row('קצבת פנסיה – ' + esc(p2), at.penBy[1] ? m(at.penBy[1]) : `מגיל ${r.pen2.age}`) +
+      row('ביטוח לאומי – ' + esc(p1), at.blBy[0] ? m(at.blBy[0]) : `מגיל ${r.bl1.age}`) + row('ביטוח לאומי – ' + esc(p2), at.blBy[1] ? m(at.blBy[1]) : `מגיל ${r.bl2.age}`) +
+      row('הכנסות נוספות (סולארי וכו׳)', m(at.other)) + row('סה״כ הכנסה פסיבית', m(at.rentNet + at.pension + at.natIns + at.other), 'total') + row('היעד', m(r.desired * 12)) +
+      row(at.gap > 0 ? 'חסר – נמשך מהתיק הנזיל' : 'עודף – חוזר לתיק', m(Math.abs(at.gap)), 'total'))}
+    <p class="info-p hint">את הסכומים משנים בטבלאות "נכסים מניבים", "קצבאות" ו"הנחות" למטה.</p>`;
+  }
+  if (k === 'liquid') {
+    const gs = r.liquidGroups.map(g => [g, sum(D().assets.filter(a => a.group === g).map(assetValue))]).filter(x => x[1]);
+    const years = Math.max(0, R - +nearYear());
+    return `<p class="info-p"><b>תיק נזיל</b> = כסף שאפשר לממש ולמשוך ממנו בפרישה – לא דירות ולא פנסיה. הסכומים נלקחים מעמוד "מבט כולל", לפי סוגי הנכסים שמסומנים ב"הנחות" למטה.</p>
+    ${tbl(gs.map(([g, v]) => row(esc(g), plain(v))).join('') + row('סה״כ היום', plain(sim.P0), 'total') +
+      row(`חיסכון ${plain(r.savings)} לחודש × ${years} שנים`, '+' + plain(sim.saved)) + row(`תשואה ריאלית ${r.realReturn}% עד ${R}`, '+' + plain(sim.startP - sim.P0 - sim.saved)) + row(`בתחילת ${R}`, plain(sim.startP), 'total'))}
+    <p class="info-p hint">"כלל 4%" הוא כלל אצבע: אפשר למשוך כ־4% מהתיק בשנה לאורך זמן. כאן: ${plain(sim.startP * 0.04 / 12)} לחודש. החישוב בעמוד מדויק יותר – שנה אחרי שנה.</p>`;
+  }
+  if (k === 'mort') return `<p class="info-p">כל משכנתא מחושבת בנפרד: היתרה גדלה בריבית הריאלית (${r.mortRate}%) ופוחתת בהחזר החודשי, עד שהיא מגיעה לאפס. המספר בריבוע הוא <b>השנה של המשכנתא האחרונה</b> – מאז כל השכירות נכנסת להכנסה.${r.payoffAtRetire ? ' מסומן סילוק מוקדם – כל היתרות נסגרות מהתיק הנזיל בשנת הפרישה.' : ''}</p>
+    ${tbl(sim.ends.map(e => row(esc(e.name), e.end ? String(e.end) : 'לא מחושב – חסר החזר חודשי')).join(''))}
+    <p class="info-p hint">יתרה והחזר לכל נכס – בטבלת "נכסים מניבים". נכס בלי החזר חודשי לא נכלל בחישוב סיום המשכנתאות.</p>`;
+  return '';
+}
+
 const RET_ICON = '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M4 4l3 3"/>';
 function rin(path, val, opt={}){ return `<input class="${opt.cls || 'inp'}" data-ret="${path}" inputmode="decimal" value="${esc(val ?? '')}" ${opt.w ? `style="width:${opt.w}"` : ''}>`; }
 VIEWS.retire = () => {
@@ -143,12 +195,13 @@ VIEWS.retire = () => {
     </div>
   </section>
   <div class="kpis">
-    <div class="kpi hero"><span class="lbl">פרישה מוקדמת אפשרית</span><span class="val">${best ? best : 'לא לפני 67'}</span><span class="sub">${best ? `${esc(p1)} בגיל ${best - r.birth1} · ${esc(p2)} בגיל ${best - r.birth2}` : 'הכסף לא מספיק עד גיל ' + r.endAge}</span></div>
-    <div class="kpi"><span class="lbl">בדיקת ${R}</span><span class="val ${sim.ok ? 'up' : 'down'}">${sim.ok ? '✓ מספיק' : '✗ חסר'}</span><span class="sub">${sim.ok ? `נשאר ${plain(sim.rows[sim.rows.length - 1].P)} בגיל ${r.endAge}` : `התיק הנזיל נגמר ב־${sim.fail} (גיל ${sim.fail - r.birth1})`}</span></div>
-    <div class="kpi"><span class="lbl">הכנסה פסיבית בשנת הפרישה</span><span class="val">${money(passive / 12)}</span><span class="sub">${pct(cover)} מהיעד · השאר מהתיק הנזיל</span></div>
-    <div class="kpi"><span class="lbl">תיק נזיל בפרישה</span><span class="val">${money(at.P)}</span><span class="sub">כלל 4%: ${plain(swr / 12)} לחודש</span></div>
-    <div class="kpi"><span class="lbl">משכנתאות מסתיימות</span><span class="val">${sim.mortFree || '—'}</span><span class="sub">${r.payoffAtRetire ? 'סילוק מוקדם בשנת הפרישה' : 'לפי ההחזר החודשי'}</span></div>
+    <div class="kpi hero">${ib('best')}<span class="lbl">פרישה מוקדמת אפשרית</span><span class="val">${best ? best : 'לא לפני 67'}</span><span class="sub">${best ? `${esc(p1)} בגיל ${best - r.birth1} · ${esc(p2)} בגיל ${best - r.birth2}` : 'הכסף לא מספיק עד גיל ' + r.endAge}</span></div>
+    <div class="kpi">${ib('check')}<span class="lbl">בדיקת פרישה ב־${R}</span><span class="val ${sim.ok ? 'up' : 'down'}">${sim.ok ? '✓ הכסף מספיק' : '✗ הכסף לא מספיק'}</span><span class="sub">${sim.ok ? `בגיל ${r.endAge} יישארו בתיק הנזיל ${plain(sim.endP)}` : `התיק הנזיל מתרוקן ב־${sim.fail} (גיל ${sim.fail - r.birth1})`}</span></div>
+    <div class="kpi">${ib('passive')}<span class="lbl">הכנסה פסיבית ב־${R}</span><span class="val">${money(passive / 12)}</span><span class="sub">${pct(cover)} מהיעד · ${at.gap > 0 ? `${plain(at.gap / 12)} נמשכים מהתיק הנזיל` : 'אין צורך למשוך מהתיק'}</span></div>
+    <div class="kpi">${ib('liquid')}<span class="lbl">תיק נזיל בתחילת ${R}</span><span class="val">${money(at.P)}</span><span class="sub">היום ${plain(sim.P0)} + חיסכון ותשואה עד הפרישה</span></div>
+    <div class="kpi">${ib('mort')}<span class="lbl">המשכנתא האחרונה מסתיימת</span><span class="val">${sim.mortFree || '—'}</span><span class="sub">${mortSub(sim)}</span></div>
   </div>
+  ${RET_INFO.open ? `<section class="card info-panel"><div class="card-h"><h3>${esc(infoTitle(RET_INFO.open, R))}</h3><button class="btn small ghost" id="infoClose" type="button">סגירה ✕</button></div>${infoBody(RET_INFO.open, r, R, best, sim)}</section>` : ''}
   <section class="card"><div class="card-h"><h3>מקורות ההכנסה מול היעד – פרישה ב־${R}</h3><span class="hint">לכל שנה: שכירות נטו, קצבאות, ביטוח לאומי ומשיכה מהתיק</span></div><div class="chart tall"><canvas id="cRetInc"></canvas></div></section>
   <div class="grid2">
     <section class="card"><div class="card-h"><h3>התיק הנזיל לאורך השנים</h3></div><div class="chart"><canvas id="cRetPort"></canvas></div></section>
@@ -226,6 +279,8 @@ VIEWS.retire.after = () => {
   $$('[data-ret]').forEach(el => el.onchange = () => { const v = +String(el.value).replace(/[,₪\s]/g, ''); if (isNaN(v)) return toast('יש להזין מספר'); set(el.dataset.ret, v); markDirty(); keepScrollR(); });
   $$('[data-retchk]').forEach(el => el.onchange = () => { set(el.dataset.retchk, el.checked); markDirty(); keepScrollR(); });
   $$('[data-retgrp]').forEach(el => el.onchange = () => { const g = el.dataset.retgrp; r.liquidGroups = el.checked ? [...new Set([...r.liquidGroups, g])] : r.liquidGroups.filter(x => x !== g); markDirty(); keepScrollR(); });
+  $$('[data-info]').forEach(b => b.onclick = () => { RET_INFO.open = RET_INFO.open === b.dataset.info ? null : b.dataset.info; keepScrollR(); });
+  const ic = $('#infoClose'); if (ic) ic.onclick = () => { RET_INFO.open = null; keepScrollR(); };
   const pl = $('#retPlan'); if (pl) pl.onchange = () => { r.planYear = pl.value ? +pl.value : null; keepScrollR(); };
 };
 function keepScrollR(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
