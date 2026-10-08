@@ -141,6 +141,6 @@ VIEWS.upSolar.after = () => {
 (function(){
   if (PAGES.some(p => p.id === 'upSolar')) return;
   const i = PAGES.findIndex(p => p.id === 'upPen');
-  PAGES.splice(i >= 0 ? i + 1 : PAGES.length, 0, {id:'upSolar', t:'העלאת חשבון חשמל', sec:'עדכון נתונים', i:SUN_ICON});
+  PAGES.splice(i >= 0 ? i + 1 : PAGES.length, 0, {id:'upSolar', t:'העלאת חשבון חשמל (סולארי)', sec:'עדכון נתונים', i:SUN_ICON});
   if (S.data) { buildNav(); if (location.hash.slice(1) === 'upSolar') { S.tab = 'upSolar'; render(); } }
 })();
