@@ -235,6 +235,9 @@ body.edit-on td input.cell.wide{width:170px}
 .rate-strip .rs-hint{color:var(--muted);font-size:12.5px;margin-inline-start:auto}
 .rate-strip .btn{color:var(--accent);padding:2px 8px}
 @media (max-width:760px){.rate-strip .rs-hint{display:none}.rate-strip .btn{margin-inline-start:auto}}
+.retire-top .field{min-width:150px;flex:1}
+.retire-top .field.big{flex:2;min-width:240px}
+.retire-top .big-inp{font:700 26px var(--f-display);padding:8px 12px;color:var(--accent)}
 tr.pctrow td{font-size:12px;color:var(--muted);padding-block:4px}
 td.x-col{width:28px;padding-inline:4px}
 .xbtn{border:0;background:var(--neg-soft);color:var(--neg);font-weight:700;margin-inline-end:6px;cursor:pointer;width:24px;height:24px;border-radius:6px;font-size:15px;line-height:1;display:inline-grid;place-items:center}
@@ -317,7 +320,7 @@ td.x-col{width:28px;padding-inline:4px}
 <script src="vendor/xlsx.full.min.js"></script>
 <script>/* load the newest app code every time (GitHub Pages caches files for ~10 minutes); import.js needs app.js first */
 (function(){var v=Date.now();function add(src,next){var s=document.createElement("script");s.src=src+"?v="+v;if(next)s.onload=next;document.body.appendChild(s);}
-add("app.js",function(){add("import.js",function(){add("solar.js");});});})();
+add("app.js",function(){add("import.js",function(){add("solar.js",function(){add("retire.js");});});});})();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});</script>
 </body>
 </html>
