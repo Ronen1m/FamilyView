@@ -317,7 +317,7 @@ td.x-col{width:28px;padding-inline:4px}
 <script src="vendor/xlsx.full.min.js"></script>
 <script>/* load the newest app code every time (GitHub Pages caches files for ~10 minutes); import.js needs app.js first */
 (function(){var v=Date.now();function add(src,next){var s=document.createElement("script");s.src=src+"?v="+v;if(next)s.onload=next;document.body.appendChild(s);}
-add("app.js",function(){add("import.js");});})();
+add("app.js",function(){add("import.js",function(){add("solar.js");});});})();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});</script>
 </body>
 </html>
