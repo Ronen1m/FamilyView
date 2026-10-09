@@ -73,7 +73,7 @@ async function ghRequest(method, body, path){
   const g = ghCfg();
   const url = `https://api.github.com/repos/${g.owner}/${g.repo}/contents/${path || g.path || 'data/data.enc.json'}` + (method === 'GET' ? `?ref=${g.branch || 'main'}` : '');
   if (navigator.onLine === false) throw new Error('אין חיבור לאינטרנט');
-  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), method === 'GET' ? 7000 : 30000); // weak connection: don't hang
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), method === 'GET' ? (store.get('encCopy') ? 3000 : 6000) : 30000); // weak connection: don't hang
   let r; try { r = await fetch(url, {method, headers:{Authorization:`Bearer ${g.token}`, Accept:'application/vnd.github+json'}, body: body ? JSON.stringify(body) : undefined, cache:'no-store', signal:ctl.signal}); }
   catch (e) { throw new Error(e.name === 'AbortError' ? 'החיבור איטי מדי' : 'אין חיבור לאינטרנט'); }
   finally { clearTimeout(t); }

@@ -14,7 +14,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <title>ניתוח פיננסי משפחתי</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=Rubik:wght@500;600;700&display=swap">
+<!-- fonts load in the background so a weak / missing connection never blocks the screen -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=Rubik:wght@500;600;700&display=swap" media="print" onload="this.media='all'">
 <style>
 /* Layout: right-hand rail of sections (drawer on phones) + a scrolling ledger of cards and tables. */
 :root{

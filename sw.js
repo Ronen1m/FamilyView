@@ -2,7 +2,7 @@
    - On install, saves the whole app (pages, code, libraries, icons, data) on the device.
    - Always tries the network first (so updates show immediately), but gives up after a few
      seconds and uses the saved copy – so a weak / missing connection never leaves a blank screen. */
-const CACHE = 'familyview-v3';
+const CACHE = 'familyview-v4';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
   'app.js', 'import.js', 'solar.js', 'retire.js',
@@ -29,16 +29,25 @@ const FONTS = /^https:\/\/fonts\.(googleapis|gstatic)\.com$/;
 
 function withTimeout(p, ms){ return new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('timeout')), ms); p.then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); }); }
 
+// once the network failed or was too slow, use the saved copy straight away for a while
+// (so a weak connection costs one short wait, not a wait per file)
+let badUntil = 0;
+const netBad = () => navigator.onLine === false || Date.now() < badUntil;
+const markBad = () => { badUntil = Date.now() + 30000; };
+
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // Google fonts: saved copy first, refreshed in the background
+  // Google fonts: saved copy first; without one, give up quickly (the app falls back to system fonts)
   if (FONTS.test(url.origin)) {
     e.respondWith(caches.open(CACHE).then(c => c.match(req.url).then(hit => {
       const net = fetch(req).then(r => { if (r.ok || r.type === 'opaque') c.put(req.url, r.clone()); return r; });
-      return hit || net;
+      net.catch(() => {});
+      if (hit) { e.waitUntil(net.catch(() => {})); return hit; }
+      if (netBad()) return Response.error();
+      return withTimeout(net, 2500).catch(() => { markBad(); return Response.error(); });
     })));
     return;
   }
@@ -48,12 +57,16 @@ self.addEventListener('fetch', e => {
   const key = nav ? scopePath : keyOf(url);
   const fromCache = () => caches.open(CACHE).then(c => c.match(key)).then(r => r || caches.match(key, {ignoreSearch:true}));
   const net = fetch(req).then(r => {
-    if (r.ok) { const copy = r.clone(); e.waitUntil(caches.open(CACHE).then(c => c.put(key, copy))); }
+    if (r.ok) { const copy = r.clone(); return caches.open(CACHE).then(c => c.put(key, copy)).then(() => r, () => r); }
     return r;
   });
   net.catch(() => {});
+  if (netBad()) { // known bad connection: saved copy now, refresh in the background if the network comes back
+    e.respondWith(fromCache().then(r => { if (r) { e.waitUntil(net.catch(() => {})); return r; } return net; }));
+    return;
+  }
   e.respondWith(
-    withTimeout(net, navigator.onLine === false ? 0 : (nav ? 4000 : 6000))
-      .catch(() => fromCache().then(r => r || net)) // nothing saved yet → keep waiting for the network
+    withTimeout(net, 3000)
+      .catch(() => { markBad(); return fromCache().then(r => r || net); }) // nothing saved yet → keep waiting for the network
   );
 });
