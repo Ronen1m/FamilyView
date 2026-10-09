@@ -72,18 +72,29 @@ const canPublishDemo = () => !!(ghCfg()?.token);
 async function ghRequest(method, body, path){
   const g = ghCfg();
   const url = `https://api.github.com/repos/${g.owner}/${g.repo}/contents/${path || g.path || 'data/data.enc.json'}` + (method === 'GET' ? `?ref=${g.branch || 'main'}` : '');
-  const r = await fetch(url, {method, headers:{Authorization:`Bearer ${g.token}`, Accept:'application/vnd.github+json'}, body: body ? JSON.stringify(body) : undefined, cache:'no-store'});
+  if (navigator.onLine === false) throw new Error('אין חיבור לאינטרנט');
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), method === 'GET' ? 7000 : 30000); // weak connection: don't hang
+  let r; try { r = await fetch(url, {method, headers:{Authorization:`Bearer ${g.token}`, Accept:'application/vnd.github+json'}, body: body ? JSON.stringify(body) : undefined, cache:'no-store', signal:ctl.signal}); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? 'החיבור איטי מדי' : 'אין חיבור לאינטרנט'); }
+  finally { clearTimeout(t); }
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
   return r.json();
 }
+// the last encrypted copy that was opened/saved on this device (still encrypted – safe to keep), used when offline
+const keepLocal = p => store.set('encCopy', {at:Date.now(), p});
 async function loadEncrypted(){
-  const g = ghCfg();
+  const g = ghCfg(), local = store.get('encCopy');
+  if (navigator.onLine === false && local) { S.offline = true; return local.p; }
   if (g && g.token) {
-    try { const f = await ghRequest('GET'); return JSON.parse(atob(f.content.replace(/\s/g, ''))); } catch (e) { console.warn('GitHub load failed, using site copy', e); }
+    try { const f = await ghRequest('GET'); const p = JSON.parse(atob(f.content.replace(/\s/g, ''))); keepLocal(p); return p; } catch (e) { console.warn('GitHub load failed, using site copy', e); }
   }
-  const r = await fetch('data/data.enc.json', {cache:'no-store'});
-  if (!r.ok) throw new Error('missing data file');
-  return r.json();
+  try {
+    const r = await fetch('data/data.enc.json', {cache:'no-store'});
+    if (!r.ok) throw new Error('missing data file');
+    const p = await r.json();
+    if (local && g && g.token) { S.offline = true; return local.p; } // GitHub unreachable: this device's copy is newer than the site's
+    keepLocal(p); return p;
+  } catch (e) { if (local) { S.offline = true; return local.p; } throw e; }
 }
 
 /* ---------- data helpers ---------- */
@@ -819,12 +830,13 @@ async function save(){
     if (g && g.token) {
       let sha; try { sha = (await ghRequest('GET')).sha; } catch {}
       await ghRequest('PUT', {message:`עדכון נתונים ${today()}`, content:btoa(JSON.stringify(payload)), branch:g.branch || 'main', sha});
+      keepLocal(payload);
       toast('נשמר ב־GitHub ✓');
     } else {
       download(JSON.stringify(payload), 'data.enc.json');
     }
     S.dirty = false; $('#savebar').hidden = true; render();
-  } catch (e) { toast('השמירה נכשלה: ' + e.message + '. בדקו את פרטי GitHub בהגדרות.', 5000); }
+  } catch (e) { toast(navigator.onLine === false || /חיבור/.test(e.message) ? 'אין חיבור לאינטרנט – השינויים נשארים פתוחים. שמרו שוב כשהחיבור יחזור.' : 'השמירה נכשלה: ' + e.message + '. בדקו את פרטי GitHub בהגדרות.', 5000); }
   btn.disabled = false; btn.textContent = 'שמירה';
 }
 
@@ -834,6 +846,7 @@ async function enter(mode, data, pw){
   $('#login').hidden = true; $('#app').hidden = false;
   const h = location.hash.slice(1); if (PAGES.some(p => p.id === h)) S.tab = h;
   buildNav(); render();
+  if (S.offline || navigator.onLine === false) toast('אין חיבור לאינטרנט – מוצגים הנתונים ששמורים במכשיר', 4000);
 }
 async function doLogin(user, pw){
   const err = $('#loginErr'); err.textContent = '';
