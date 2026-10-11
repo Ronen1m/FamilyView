@@ -22,7 +22,17 @@ function incList(){ const y = lastYearOf(D().incomes); return (D().incomes[y] ||
 
 /* ---------- parsing ---------- */
 async function readSheets(file){
-  const wb = XLSX.read(await file.arrayBuffer(), {type:'array', cellDates:true, codepage:1255});
+  const buf = await file.arrayBuffer();
+  const head = new TextDecoder('latin1').decode(buf.slice(0, 4000));
+  if (/<html|<table/i.test(head)) { // "xls" files that are really web pages (e.g. Leumi): read every table row
+    const cs = (head.match(/charset=["']?([\w-]+)/i) || [])[1] || 'utf-8';
+    let txt; try { txt = new TextDecoder(cs).decode(buf); } catch { txt = new TextDecoder('utf-8').decode(buf); }
+    const doc = new DOMParser().parseFromString(txt, 'text/html');
+    const rows = [...doc.querySelectorAll('tr')].filter(tr => !tr.querySelector('tr'))
+      .map(tr => [...tr.children].map(td => td.textContent.replace(/[\u200b-\u200f\u00a0]/g, ' ').replace(/\s+/g, ' ').trim()));
+    return [{name:'דף', rows}];
+  }
+  const wb = XLSX.read(buf, {type:'array', cellDates:true, codepage:1255});
   return wb.SheetNames.map(n => ({name:n, rows:XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:true, defval:''})}));
 }
 function toDate(v){
@@ -37,7 +47,7 @@ function toDate(v){
 }
 function toNum(v){
   if (typeof v === 'number') return v;
-  let s = String(v ?? '').replace(/[₪$€,\s]|ש"ח|NIS|ILS/gi, '').trim();
+  let s = String(v ?? '').replace(/[₪$€,\s\u200b-\u200f]|ש"ח|NIS|ILS/gi, '').trim();
   if (!s) return NaN;
   let neg = false;
   if (/-$/.test(s)) { neg = true; s = s.slice(0, -1); }
@@ -182,7 +192,41 @@ function learnRule(desc, v, card){
   const rules = impData().rules, i = rules.findIndex(r => r.m === m && (r.c || '') === (card || ''));
   if (i >= 0) rules[i].v = v; else rules.push(card ? {m, v, c:card} : {m, v});
 }
+// amounts already in a month that did not come from an earlier import are usually the plan (copied forward).
+// before adding, ask whether the file's amount replaces that plan or comes on top of it.
+const cellKey = x => x.t === 'e' ? `e|${x.y}|${x.m}|${x.d}|${x.i}` : `i|${x.y}|${x.m}|${x.n}`;
+function cellNow(x){
+  if (x.t === 'e') { const it = (D().expenses[x.y] || []).find(g => g.domain === x.d)?.items.find(i => i.name === x.i); return {v:+(it?.months[x.m]) || 0, fixed:!!it?.fixed}; }
+  const r = (D().incomes[x.y] || []).find(r => r.name === x.n); return {v:+(r?.months[x.m]) || 0, fixed:true};
+}
+function plannedCells(xs){
+  const imported = {}; for (const l of impData().log) for (const d of l.deltas || []) imported[cellKey(d)] = (imported[cellKey(d)] || 0) + d.v;
+  const cells = {}; for (const x of xs) (cells[cellKey(x)] ||= {x, add:0}).add += x.v;
+  return Object.entries(cells).map(([k, c]) => { const now = cellNow(c.x), planned = r2(now.v - (imported[k] || 0)); return {k, x:c.x, add:r2(c.add), planned, mode:now.fixed ? 'replace' : 'add'}; })
+    .filter(c => Math.abs(c.planned) > 0.005);
+}
+function txDeltas(){ // what the classified rows would add, before writing anything
+  const xs = [];
+  for (const r of IMP.rows) {
+    if (!r.v || r.v === 'skip' || r.v === 'later') continue;
+    const {y, m} = rowMonth(r);
+    if (r.v.startsWith('e:')) { const c = IMP.cats[+r.v.slice(2)]; xs.push({t:'e', y, d:c.d, i:c.i, m, v:r.amt}); }
+    else if (r.v.startsWith('i:')) xs.push({t:'i', y, n:IMP.incs[+r.v.slice(2)], m, v:-r.amt});
+  }
+  return xs;
+}
+function confirmHtml(kind){
+  if (!IMP.confirm) return '';
+  const lbl = x => x.t === 'e' ? `${oneLine(x.d)} ← ${x.i}` : 'הכנסה: ' + x.n;
+  return `<section class="card ask" id="confirmBox"><div class="card-h"><h3>יש כבר סכום בחודשים האלה</h3><span class="hint">הסכום הקיים לא הגיע מקליטה קודמת – לרוב זה התכנון שהועתק מחודש קודם. מה לעשות עם הסכום מהקובץ?</span></div>
+    <div class="tbl-wrap"><table><thead><tr><th>חודש</th><th>קטגוריה</th><th class="n">רשום עכשיו</th><th class="n">מהקובץ</th><th>מה לעשות</th></tr></thead><tbody>
+    ${IMP.confirm.map((c, i) => `<tr><td>${MS[c.x.m]} ${String(c.x.y).slice(2)}</td><td>${esc(lbl(c.x))}</td><td class="n">${money(c.planned)}</td><td class="n">${money(c.add)}</td>
+      <td><select class="inp" style="padding:5px 8px" data-cmode="${i}"><option value="replace" ${c.mode === 'replace' ? 'selected' : ''}>להחליף (הקיים הוא תכנון) → ${plain(c.add)}</option><option value="add" ${c.mode === 'add' ? 'selected' : ''}>להוסיף (הוצאה נוספת) → ${plain(r2(c.planned + c.add))}</option></select></td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="row"><button class="btn primary" id="confirmGo" type="button">אישור וקליטה</button><button class="btn ghost" id="confirmBack" type="button">חזרה לסיווג</button></div></section>`;
+}
 function commitTx(){
+  if (!IMP.confirm) { const pc = plannedCells(txDeltas()); if (pc.length) { IMP.confirm = pc; keepScroll(); setTimeout(() => $('#confirmBox')?.scrollIntoView({behavior:'smooth', block:'start'}), 60); return; } }
   const ip = impData(), deltas = [], hashes = [], later = [], id = Date.now();
   let total = 0;
   for (const r of IMP.rows) {
@@ -201,6 +245,8 @@ function commitTx(){
     }
     hashes.push(r.h);
   }
+  for (const c of IMP.confirm || []) if (c.mode === 'replace') { const x = {...c.x, v:-c.planned, plan:true}; applyDelta(x, 1); deltas.push(x); total -= x.t === 'e' ? c.planned : 0; }
+  IMP.confirm = null;
   if (!deltas.length && !hashes.length && !later.length) return toast('אין שורות מסווגות לקליטה');
   for (const r of later) { const {y, m} = rowMonth(r); ip.pending.push({id:id + '-' + ip.pending.length, imp:id, kind:IMP.kind, file:IMP.file, desc:r.desc, amt:r.amt, date:ymKey(r.date) + '-' + String(r.date.getDate()).padStart(2, '0'), y, m, h:r.h, card:r.card || ''}); }
   ip.log.unshift({id, kind:IMP.kind, file:IMP.file, date:today(), n:deltas.length, total:r2(total), deltas, hashes});
@@ -216,7 +262,7 @@ function undoImport(id){
   ip.pending = ip.pending.filter(q => q.imp !== l.id); // its open questions go too
   ip.log.splice(i, 1); markDirty(); toast('הקליטה בוטלה'); render();
 }
-function resetImp(){ if (IMP.pdfUrl) URL.revokeObjectURL(IMP.pdfUrl); Object.assign(IMP, {file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, pen:{}, penRows:[], pdfUrl:null, msg:'', card:'', pdfInfo:null}); }
+function resetImp(){ if (IMP.pdfUrl) URL.revokeObjectURL(IMP.pdfUrl); Object.assign(IMP, {file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, pen:{}, penRows:[], pdfUrl:null, msg:'', card:'', pdfInfo:null, confirm:null}); }
 
 /* ---------- file handling ---------- */
 async function onCardPdf(files){
@@ -251,6 +297,17 @@ async function onTxFile(input, kind){
     for (const sh of IMP.sheets) { sh.map = detect(sh.rows); items = items.concat(extract(sh, sh.map, kind)); }
     const first = IMP.sheets.find(s => s.map) || IMP.sheets[0];
     IMP.map = first;
+    if (kind === 'card' && items.length) { // card number, statement month and total (Leumi / Diners style files)
+      const all = IMP.sheets.flatMap(sh => sh.rows.map(r => r.map(c => String(c ?? '')).join(' ')));
+      const top = all.slice(0, 20).join(' ');
+      const cm = top.match(/לכרטיס[^\d]{0,40}?(\d{4})(?!\d)/), pm = top.match(/לתקופה:?\s*(\S+)\s+(\d{4})/);
+      if (cm) { IMP.card = cm[1]; items.forEach(i => i.card = cm[1]); }
+      const per = pm && MONTHS.indexOf(pm[1]) >= 0 ? new Date(+pm[2], MONTHS.indexOf(pm[1]), 1) : null;
+      if (per) items.forEach(i => { if (!i.charge) i.charge = per; });
+      const totRow = all.filter(t => /סה"?כ/.test(t)).pop(), tm = totRow && totRow.match(/סה"?כ:?\s*(-?[\d,]+\.\d\d)/);
+      const tot = r2(sum(items.map(i => i.amt))), stated = tm ? toNum(tm[1]) : null, ok = stated == null || Math.abs(tot - stated) < 0.02;
+      IMP.pdfInfo = [{t:`${per ? MONTHS[per.getMonth()] + ' ' + per.getFullYear() : file.name}${cm ? ' · כרטיס ' + cm[1] : ''}: ${items.length} עסקאות, ${plain(tot)}${stated == null ? '' : ok ? ' ✓ תואם לסה״כ בדוח' : ` ⚠ בדוח כתוב ${plain(stated)}`}`, bad:!ok}];
+    }
     if (!items.length) IMP.msg = 'לא זיהיתי טבלת תנועות אוטומטית. בחרו למטה את שורת הכותרות ואת העמודות.';
     IMP.rows = buildRows(kind, items);
     if (!IMP.sheets.some(s => s.map)) IMP.sheets.forEach(s => s.map = guessManual(s.rows));
@@ -272,7 +329,15 @@ function reExtract(){
 // keyword hints: [what the business name looks like, which category names fit, prefer the card owner's own row]
 const HINTS = [
   [/סופר.?פארם|בית מרקחת|\bbe\b|גוד פארם/i, /פארם/],
-  [/סופר|שופרסל|רמי לוי|יוחננוף|ויקטורי|טיב טעם|קואופ|מגה|אושר עד|חצי חינם|משק |מכולת|מינימרקט|ירקות|פירות|עמיר שיווק|נתיב החסד/i, /^סופר(?! פארם)/, true],
+  [/סופר|שופרסל|רמי לוי|יוחננוף|ויקטורי|טיב טעם|קואופ|מגה|אושר עד|חצי חינם|משק |מכולת|מינימרקט|ירקות|פירות|עמיר שיווק|נתיב החסד|קשת טעמים/i, /^סופר(?! פארם)/, true],
+  [/מאפ|פינקיצ'?ן|ללא גלוטן|לחם |בייקרי/i, /מאפי/, true],
+  [/(ביטוח|בטוח) חיים/i, /ביטוח חיים/, false, 'amount'],
+  [/ביטוח|בטוח|הראל|הפניקס|מגדל|כלל |איילון|מנורה/i, /ביטוח/, false, 'amount'],
+  [/hotel|radisson|gasthof|hostel|motel|airbnb|booking\.com|\bb\. ?w\./i, /מלונות/],
+  [/caf[eé]|restaurant|burger|gastro|cuis|beer|\bbar\b|pizz|kuchel|bistro|grill|sushi|trattoria|brasserie/i, /מסעדות בחול/],
+  [/billa|hofer|spar\b|lidl|rewe|aldi|carrefour|tesco|mercadona|pingo|continente|monoprix/i, /הוצאות חו"ל/],
+  [/oebb|ticket|train|metro|uber|bolt|taxi|airport|ryanair|wizz|easyjet|lufthansa/i, /טיסות|הוצאות חו"ל/],
+  [/עמלת עסקאות מט"?ח|עמלת המרה|הנחה בעמלת/i, /הוצאות חו"ל/],
   [/temu|ali.?express|shein/i, /TEMO|ALI/i],
   [/amazon/i, /AMAZON/i], [/iherb/i, /iherb/i], [/ksp/i, /KSP/i], [/דקטלון|decathlon/i, /דקאטלון/],
   [/מסעד|קפה|ארומה|קפיט|פיצ|בורגר|סושי|יאמי|שווארמ|פלאפל|גלידה|wolt|וולט|תן ביס|מאפ|בייקרי/i, /^מסעדות ויציאות|^קפה|מסעדות/],
@@ -283,6 +348,12 @@ const HINTS = [
   [/ספר|סטימצקי|צעצוע|toys|משחק/i, /ספרים|משחקים/],
   [/כושר|פיטנס|fitness|סטודיו/i, /כושר|אימונים/, true, 'ספורט'],
 ];
+// how far an amount is from what a category usually costs (its latest non-zero month)
+function amtGap(c, amt){
+  const y = lastYearOf(D().expenses), it = (D().expenses[y] || []).find(g => g.domain === c.d)?.items.find(i => i.name === c.i);
+  const ref = it ? [...it.months].reverse().find(v => +v > 0) : 0;
+  return ref ? Math.abs(ref - amt) / Math.max(ref, Math.abs(amt)) : 9;
+}
 function cardOwner(card){ const o = card && impData().cards[card]; return o ? (D().settings.people || {})[o] || '' : ''; }
 function suggestFor(r){
   const out = [], add = v => { if (v && v !== 'skip' && !out.includes(v)) out.push(v); };
@@ -292,6 +363,7 @@ function suggestFor(r){
   for (const [rx, cat, own] of HINTS) {
     if (!rx.test(r.desc)) continue;
     let ks = IMP.cats.map((c, k) => ({c, k})).filter(x => cat.test(x.c.i));
+    if (HINTS.find(h => h[0] === rx)[3] === 'amount') ks.sort((a, b) => amtGap(a.c, r.amt) - amtGap(b.c, r.amt)); // insurance: the row whose usual amount is closest
     if (own && owner) {
       const mine = ks.filter(x => x.c.i.includes(owner));
       if (mine.length) ks = mine;
@@ -322,7 +394,7 @@ function addCategory(dom, name){
 // one question per business: all rows with the same name are answered together
 function questionGroups(rows){
   const g = new Map();
-  rows.forEach(r => { const k = normDesc(r.desc) + '|' + (r.card || ''); if (!g.has(k)) g.set(k, {desc:r.desc, card:r.card, rows:[]}); g.get(k).rows.push(r); });
+  rows.forEach(r => { const k = normDesc(r.desc) + '|' + (r.card || '') + (/ביטוח|בטוח/.test(r.desc) ? '|' + r.amt : ''); /* several policies of one insurer = several questions */ if (!g.has(k)) g.set(k, {desc:r.desc, card:r.card, rows:[]}); g.get(k).rows.push(r); });
   return [...g.values()];
 }
 function questionHtml(q, idx, kind, src){
@@ -378,6 +450,7 @@ function bindAsk(){
     if (v.startsWith('n:')) { const [dom, name] = v.slice(2).split('|'); v = addCategory(dom, name); IMP.newFor = null; }
     const [src, i] = key.split(':'), q = (src === 'now' ? IMP.qs : IMP.pq)[+i]; if (!q) return;
     if (src === 'old') return answerPending(q, v);
+    IMP.confirm = null;
     q.rows.forEach(r => { r.v = v; r.touched = v !== 'later'; r.why = v === 'later' ? 'אחר כך' : 'תשובה'; });
     keepScroll();
   };
@@ -474,7 +547,7 @@ function txView(kind){
   </section>
   ${pendingHtml(kind)}
   ${has ? mapperHtml() : ''}
-  ${has && rows.length ? askHtml(kind) : ''}
+  ${has && rows.length ? confirmHtml(kind) + askHtml(kind) : ''}
   ${has && rows.length ? `
   <div class="kpis">
     <div class="kpi"><span class="lbl">תנועות בקובץ</span><span class="val">${rows.length}</span><span class="sub">${rows.filter(r => r.dup).length} כבר נקלטו בעבר</span></div>
@@ -511,12 +584,16 @@ function txAfter(kind){
   const oo = $('#txOnlyOpen'); if (oo) oo.onchange = () => { IMP.onlyOpen = oo.checked; keepScroll(); };
   const le = $('#txLearn'); if (le) le.onchange = () => { IMP.learn = le.checked; };
   $$('[data-row]').forEach(s => s.onchange = () => {
+    IMP.confirm = null; // classification changed → the plan check runs again on the next press
     const r = IMP.rows[+s.dataset.row]; r.v = s.value; r.touched = true; r.why = '';
     if (s.value) { const n = normDesc(r.desc); IMP.rows.forEach(o => { if (o !== r && !o.v && !o.dup && normDesc(o.desc) === n) { o.v = s.value; o.touched = true; } }); }
     keepScroll();
   });
   const cm = $('#txCommit'); if (cm) cm.onclick = commitTx;
   bindMapper(); bindLogRules(); bindAsk();
+  $$('[data-cmode]').forEach(s => s.onchange = () => { IMP.confirm[+s.dataset.cmode].mode = s.value; });
+  const cg = $('#confirmGo'); if (cg) cg.onclick = commitTx;
+  const cb = $('#confirmBack'); if (cb) cb.onclick = () => { IMP.confirm = null; keepScroll(); };
 }
 function bindMapper(){
   const ms = $('#mapSheet'); if (ms) ms.onchange = () => { IMP.map = IMP.sheets[+ms.value]; IMP.map.map ||= guessManual(IMP.map.rows); reExtract(); };
