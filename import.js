@@ -267,53 +267,51 @@ function undoImport(id){
 function resetImp(){ if (IMP.pdfUrl) URL.revokeObjectURL(IMP.pdfUrl); Object.assign(IMP, {file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, pen:{}, penRows:[], pdfUrl:null, msg:'', card:'', pdfInfo:null, confirm:null}); }
 
 /* ---------- file handling ---------- */
-async function onCardPdf(files){
-  resetImp(); IMP.kind = 'card'; IMP.file = files.map(f => f.name).join(', ');
-  try {
-    let items = []; const info = [];
-    for (const f of files) {
-      const r = parseCardPdf(await pdfLines(f));
-      if (!r.items.length) { info.push({t:`${f.name}: לא זוהו עסקאות`, bad:true}); continue; }
-      if (r.card) IMP.card = r.card;
-      const tot = r2(sum(r.items.map(i => i.amt))), ok = r.total == null || Math.abs(tot - r.total) < 0.02;
-      info.push({t:`${r.period ? MONTHS[r.period.getMonth()] + ' ' + r.period.getFullYear() : f.name}${r.card ? ' · כרטיס ' + r.card : ''}: ${r.items.length} עסקאות, ${plain(tot)}${r.total == null ? '' : ok ? ' ✓ תואם לסה״כ בדוח' : ` ⚠ בדוח כתוב ${plain(r.total)}`}`, bad:!ok});
-      items = items.concat(r.items);
-    }
-    IMP.pdfInfo = info;
-    items.sort((a, b) => a.date - b.date);
-    IMP.rows = buildRows('card', items);
-    if (!items.length) IMP.msg = 'לא זיהיתי עסקאות בקובץ ה־PDF. אפשר להוריד מהאתר קובץ אקסל במקום.';
-  } catch (e) { console.error(e); IMP.msg = 'לא הצלחתי לקרוא את ה־PDF: ' + e.message; }
-  render();
+// one line per file: month, card, how many transactions, and whether the sum matches the statement's own total
+function fileInfo(name, items, period, card, stated){
+  const tot = r2(sum(items.map(i => i.amt))), ok = stated == null || Math.abs(tot - stated) < 0.02;
+  return {t:`${period ? MONTHS[period.getMonth()] + ' ' + period.getFullYear() : name}${card ? ' · כרטיס ' + card : ''}: ${items.length} תנועות, ${plain(tot)}${stated == null ? '' : ok ? ' ✓ תואם לסה״כ בדוח' : ` ⚠ בדוח כתוב ${plain(stated)}`}`, bad:!ok};
 }
+async function readOne(f, kind, single){ // → {items, info}
+  if (/\.pdf$/i.test(f.name)) {
+    if (kind !== 'card') return {items:[], info:{t:`${f.name}: קובץ PDF של בנק לא נקרא כאן – הורידו אקסל או CSV`, bad:true}};
+    const r = parseCardPdf(await pdfLines(f));
+    if (!r.items.length) return {items:[], info:{t:`${f.name}: לא זוהו עסקאות`, bad:true}};
+    return {items:r.items, info:fileInfo(f.name, r.items, r.period, r.card, r.total)};
+  }
+  if (!window.XLSX) return {items:[], info:{t:`${f.name}: רכיב קריאת האקסל לא נטען – רעננו את הדף`, bad:true}};
+  const sheets = await readSheets(f);
+  let items = [];
+  for (const sh of sheets) { sh.map = detect(sh.rows); items = items.concat(extract(sh, sh.map, kind)); }
+  if (single) { IMP.sheets = sheets; IMP.map = sheets.find(s => s.map) || sheets[0]; if (!sheets.some(s => s.map)) sheets.forEach(s => s.map = guessManual(s.rows)); }
+  if (!items.length) return {items, info:{t:`${f.name}: לא זוהתה טבלת תנועות${single ? ' – בחרו למטה את שורת הכותרות ואת העמודות' : ' – העלו אותו לבד כדי למפות עמודות'}`, bad:true}};
+  let card = '', per = null, stated = null;
+  if (kind === 'card') { // card number, statement month and total (Leumi / Diners style files)
+    const all = sheets.flatMap(sh => sh.rows.map(r => r.map(c => String(c ?? '')).join(' ')));
+    const top = all.slice(0, 20).join(' ');
+    const cm = top.match(/לכרטיס[^\d]{0,40}?(\d{4})(?!\d)/), pm = top.match(/לתקופה:?\s*(\S+)\s+(\d{4})/);
+    if (cm) { card = cm[1]; items.forEach(i => i.card = card); }
+    per = pm && MONTHS.indexOf(pm[1]) >= 0 ? new Date(+pm[2], MONTHS.indexOf(pm[1]), 1) : null;
+    if (per) items.forEach(i => { if (!i.charge) i.charge = per; });
+    const totRow = all.filter(t => /סה"?כ/.test(t)).pop(), tm = totRow && totRow.match(/סה"?כ:?\s*(-?[\d,]+\.\d\d)/);
+    stated = tm ? toNum(tm[1]) : null;
+  }
+  return {items, info:fileInfo(f.name, items, per, card, stated)};
+}
+// any number of files at once (PDF, xlsx, xls, csv – also mixed, also several cards)
 async function onTxFile(input, kind){
-  const files = Array.from(input.length != null ? input : [input]);
-  if (kind === 'card' && files.every(f => /\.pdf$/i.test(f.name))) return onCardPdf(files);
-  const file = files.find(f => !/\.pdf$/i.test(f.name)) || files[0];
-  resetImp(); IMP.kind = kind; IMP.file = file.name;
-  if (!window.XLSX) { IMP.msg = 'רכיב קריאת האקסל לא נטען. רעננו את הדף ונסו שוב.'; return render(); }
-  if (/\.pdf$/i.test(file.name)) { IMP.msg = 'קובץ PDF של בנק לא נקרא כאן. הורידו מהאתר את הקובץ בפורמט אקסל (xlsx/xls) או CSV.'; return render(); }
-  try {
-    IMP.sheets = await readSheets(file);
-    let items = [];
-    for (const sh of IMP.sheets) { sh.map = detect(sh.rows); items = items.concat(extract(sh, sh.map, kind)); }
-    const first = IMP.sheets.find(s => s.map) || IMP.sheets[0];
-    IMP.map = first;
-    if (kind === 'card' && items.length) { // card number, statement month and total (Leumi / Diners style files)
-      const all = IMP.sheets.flatMap(sh => sh.rows.map(r => r.map(c => String(c ?? '')).join(' ')));
-      const top = all.slice(0, 20).join(' ');
-      const cm = top.match(/לכרטיס[^\d]{0,40}?(\d{4})(?!\d)/), pm = top.match(/לתקופה:?\s*(\S+)\s+(\d{4})/);
-      if (cm) { IMP.card = cm[1]; items.forEach(i => i.card = cm[1]); }
-      const per = pm && MONTHS.indexOf(pm[1]) >= 0 ? new Date(+pm[2], MONTHS.indexOf(pm[1]), 1) : null;
-      if (per) items.forEach(i => { if (!i.charge) i.charge = per; });
-      const totRow = all.filter(t => /סה"?כ/.test(t)).pop(), tm = totRow && totRow.match(/סה"?כ:?\s*(-?[\d,]+\.\d\d)/);
-      const tot = r2(sum(items.map(i => i.amt))), stated = tm ? toNum(tm[1]) : null, ok = stated == null || Math.abs(tot - stated) < 0.02;
-      IMP.pdfInfo = [{t:`${per ? MONTHS[per.getMonth()] + ' ' + per.getFullYear() : file.name}${cm ? ' · כרטיס ' + cm[1] : ''}: ${items.length} עסקאות, ${plain(tot)}${stated == null ? '' : ok ? ' ✓ תואם לסה״כ בדוח' : ` ⚠ בדוח כתוב ${plain(stated)}`}`, bad:!ok}];
-    }
-    if (!items.length) IMP.msg = 'לא זיהיתי טבלת תנועות אוטומטית. בחרו למטה את שורת הכותרות ואת העמודות.';
-    IMP.rows = buildRows(kind, items);
-    if (!IMP.sheets.some(s => s.map)) IMP.sheets.forEach(s => s.map = guessManual(s.rows));
-  } catch (e) { console.error(e); IMP.msg = 'לא הצלחתי לקרוא את הקובץ: ' + e.message; }
+  const seen = new Set(), files = Array.from(input.length != null ? input : [input]).filter(f => { const k = f.name + '|' + f.size; if (seen.has(k)) return false; seen.add(k); return true; });
+  resetImp(); IMP.kind = kind; IMP.file = files.map(f => f.name).join(', ');
+  IMP.msg = files.length > 1 ? `קורא ${files.length} קבצים…` : ''; render();
+  let items = []; const info = [];
+  for (const f of files) {
+    try { const r = await readOne(f, kind, files.length === 1); items = items.concat(r.items); info.push(r.info); }
+    catch (e) { console.error(e); info.push({t:`${f.name}: לא הצלחתי לקרוא (${e.message})`, bad:true}); }
+  }
+  IMP.pdfInfo = info;
+  items.sort((a, b) => a.date - b.date);
+  IMP.rows = buildRows(kind, items);
+  IMP.msg = items.length ? '' : 'לא זוהו תנועות בקבצים.';
   render();
 }
 function guessManual(rows){ // first row with >=3 non-empty cells
@@ -412,17 +410,17 @@ function questionHtml(q, idx, kind, src){
   </div>`;
 }
 function ownerQuestionHtml(){
-  if (!IMP.card || impData().cards[IMP.card]) return '';
+  const cards = [...new Set(IMP.rows.map(r => r.card).filter(Boolean))].filter(c => !impData().cards[c]);
   const pp = D().settings.people || {};
-  return `<div class="q"><div class="q-h"><b>של מי כרטיס ${esc(IMP.card)}?</b><span class="hint">כדי שסופר, טיפולים וכו׳ ישויכו לשורה של בעל הכרטיס</span></div>
-    <div class="q-opts">${Object.entries(pp).map(([k, n]) => `<button class="btn small" type="button" data-owner="${k}">${esc(n)}</button>`).join('')}<button class="btn small ghost" type="button" data-owner="shared">משותף</button></div></div>`;
+  return cards.map(c => `<div class="q"><div class="q-h"><b>של מי כרטיס ${esc(c)}?</b><span class="hint">כדי שסופר, טיפולים וכו׳ ישויכו לשורה של בעל הכרטיס</span></div>
+    <div class="q-opts">${Object.entries(pp).map(([k, n]) => `<button class="btn small" type="button" data-owner="${k}" data-card="${esc(c)}">${esc(n)}</button>`).join('')}<button class="btn small ghost" type="button" data-owner="shared" data-card="${esc(c)}">משותף</button></div></div>`).join('');
 }
 function askHtml(kind){
   const open = IMP.rows.filter(r => !r.v && !r.dup);
   IMP.qs = questionGroups(open);
   const own = ownerQuestionHtml();
   if (!IMP.qs.length && !own) return '';
-  return `<section class="card ask"><div class="card-h"><h3>יש לי ${IMP.qs.length + (own ? 1 : 0)} שאלות</h3><span class="hint">לא ידעתי לאן לשייך. תשובה אחת חלה על כל העסקאות מאותו בית עסק ונשמרת ככלל לפעם הבאה. ״אחר כך״ – קולטים את השאר והשאלה נשמרת.</span></div>
+  return `<section class="card ask"><div class="card-h"><h3>יש לי ${IMP.qs.length + (own.match(/class="q"/g) || []).length} שאלות</h3><span class="hint">לא ידעתי לאן לשייך. תשובה אחת חלה על כל העסקאות מאותו בית עסק ונשמרת ככלל לפעם הבאה. ״אחר כך״ – קולטים את השאר והשאלה נשמרת.</span></div>
     ${own}${IMP.qs.map((q, i) => questionHtml(q, i, kind, 'now')).join('')}</section>`;
 }
 function pendingOf(kind){ return impData().pending.filter(q => q.kind === kind); }
@@ -461,7 +459,7 @@ function bindAsk(){
   $$('[data-qnew]').forEach(b => b.onclick = () => { IMP.newFor = IMP.newFor === b.dataset.qnew ? null : b.dataset.qnew; keepScroll(); setTimeout(() => $('#qnName')?.focus(), 50); });
   const qa = $('#qnAdd'); if (qa) qa.onclick = () => { const name = $('#qnName').value.trim(); if (!name) return $('#qnName').focus(); answer(qa.dataset.qkey, 'n:' + $('#qnDom').value + '|' + name); };
   $$('[data-owner]').forEach(b => b.onclick = () => {
-    impData().cards[IMP.card] = b.dataset.owner; markDirty(); keepScroll(); // suggestions now prefer the owner's rows
+    impData().cards[b.dataset.card] = b.dataset.owner; markDirty(); keepScroll(); // suggestions now prefer the owner's rows
   });
 }
 function navBadges(){
@@ -541,7 +539,7 @@ function txView(kind){
   const shown = IMP.onlyOpen ? rows.filter(r => !r.v) : rows;
   return `
   <section class="card"><div class="card-h"><h3>העלאת קובץ ${kind === 'bank' ? 'תנועות בנק' : 'פירוט אשראי'}</h3><span class="hint">xlsx · xls · csv${kind === 'card' ? ' · PDF של כרטיס לאומי' : ''} · הקובץ נקרא רק במכשיר הזה</span></div>
-    <label class="btn primary" style="justify-self:start">${UP_ICON ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>` : ''}בחירת קובץ${kind === 'card' ? ' (אפשר כמה)' : ''}<input type="file" id="txFile" accept=".xlsx,.xls,.csv,.xlsm,.pdf" ${kind === 'card' ? 'multiple' : ''} hidden></label>
+    <label class="btn primary" style="justify-self:start">${UP_ICON ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>` : ''}בחירת קבצים (אפשר כמה יחד)<input type="file" id="txFile" accept=".xlsx,.xls,.csv,.xlsm,.pdf" multiple hidden></label>
     ${has ? `<p style="margin:0">קובץ: <b>${esc(IMP.file)}</b> <button class="btn small ghost" id="txClear" type="button">ניקוי</button></p>` : ''}
     ${IMP.msg && IMP.kind === kind ? `<p class="note" style="margin:0">${esc(IMP.msg)}</p>` : ''}
     ${has && IMP.pdfInfo ? `<ul class="pdf-info">${IMP.pdfInfo.map(x => `<li class="${x.bad ? 'down' : ''}">${esc(x.t)}</li>`).join('')}</ul>` : ''}
