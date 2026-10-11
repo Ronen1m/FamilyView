@@ -3,12 +3,12 @@
    Files are parsed in the browser (SheetJS); nothing leaves the device until the normal encrypted save.
    Every import is logged with its exact deltas so it can be undone. */
 
-const IMP = {kind:null, file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, learn:true, pen:{}, penRows:[], pdfUrl:null, msg:''};
+const IMP = {kind:null, file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, learn:true, pen:{}, penRows:[], pdfUrl:null, msg:'', card:'', pdfInfo:null};
 const KIND_LBL = {bank:'בנק', card:'אשראי', pen:'פנסיה וקרנות'};
 const CARD_RX = /ישראכרט|isracard|מקס איט|max it|\bmax\b|כאל|\bcal\b|לאומי קארד|אמריקן אקספרס|american express|דיינרס|diners|ויזה|visa|מסטרקארד|כרטיס(?:י)? אשראי/i;
 const PEN_RX = /פנסי|השתלמות|גמל|קרנות|תיק/;
 
-function impData(){ const d = D(); d.imports ||= {log:[], rules:[]}; d.imports.log ||= []; d.imports.rules ||= []; return d.imports; }
+function impData(){ const d = D(); d.imports ||= {log:[], rules:[]}; d.imports.log ||= []; d.imports.rules ||= []; d.imports.pending ||= []; d.imports.cards ||= {}; return d.imports; }
 const lastYearOf = o => yearsOf(o).pop();
 const nowStamp = () => new Date().toLocaleDateString('he-IL').replace(/\//g, '.');
 const normDesc = s => String(s ?? '').replace(/\d+/g, ' ').replace(/[*"'׳״]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -79,10 +79,50 @@ function extract(sheet, map, kind){
   return out;
 }
 
+/* ---------- card statements in PDF (e.g. Leumi "פרוט עסקאות לכרטיס") ----------
+   pdf.js returns Hebrew lines right-to-left, so a number comes back as reversed pieces: "10" "." "194" → 194.10 */
+function pdfSegs(tokens){
+  // group neighbouring tokens into number runs and text runs
+  const runs = [];
+  for (const t0 of tokens) {
+    const t = t0.replace(/[​-‏]/g, ''); if (!t.trim()) continue;
+    const k = /^[\d.,\/\-]+$/.test(t) ? 'n' : 't', last = runs[runs.length - 1];
+    if (last && last.k === k) last.v.push(t); else runs.push({k, v:[t]});
+  }
+  // punctuation with no digits between two texts ("COM" "." "TEMU") belongs to the text
+  for (let i = runs.length - 2; i > 0; i--) if (runs[i].k === 'n' && !runs[i].v.some(x => /\d/.test(x)) && runs[i - 1].k === 't' && runs[i + 1].k === 't') { runs[i - 1].v.push(...runs[i].v, ...runs[i + 1].v); runs.splice(i, 2); }
+  return runs.map(r => {
+    if (r.k === 'n') { const n = r.v.slice().reverse().join(''); return /\d/.test(n) ? {n} : null; }
+    const latin = !r.v.some(x => /[֐-׿]/.test(x));       // English names also come back reversed
+    return {t:(latin ? r.v.slice().reverse().join('') : r.v.join(' ')).replace(/\s+/g, ' ').trim()};
+  }).filter(Boolean);
+}
+function parseCardPdf(lines){
+  const res = {items:[], card:'', period:null, total:null};
+  for (const tk of lines) {
+    const sg = pdfSegs(tk), txt = tk.join(' ');
+    if (/לכרטיס|פרוט עסקאות/.test(txt)) { const n = sg.filter(x => x.n).pop(); if (n && /^\d{4}$/.test(n.n)) res.card = n.n; }
+    if (/לתקופה/.test(txt)) { const mi = MONTHS.findIndex(m => txt.includes(m)), y = (sg.find(x => x.n && /^\d{4}$/.test(x.n)) || {}).n; if (mi >= 0 && y) res.period = new Date(+y, mi, 1); continue; }
+    if (/^סה"?כ/.test((tk[0] || '').trim())) { const n = sg.find(x => x.n); if (n) res.total = toNum(n.n); continue; }
+    if (!sg.length || !sg[0].n) continue;
+    const date = toDate(sg[0].n); if (!date) continue;
+    const nums = sg.slice(1).filter(x => x.n), texts = sg.filter(x => x.t);
+    if (!nums.length || !texts.length) continue;
+    const amt = toNum(nums[nums.length - 1].n); // "סכום חיוב" – the last amount in the row
+    if (isNaN(amt) || !amt) continue;          // 0 = e.g. card fee that was waived
+    res.items.push({date, charge:res.period, desc:texts[0].t.replace(/\s+/g, ' '), amt:r2(amt), sheet:'PDF', card:res.card});
+  }
+  return res;
+}
+
 /* ---------- classification ---------- */
-function ruleFor(desc){
-  const n = normDesc(desc); let best = null;
-  for (const r of impData().rules) if (r.m && n.includes(r.m) && (!best || r.m.length > best.m.length)) best = r;
+// a rule learned on a specific card (r.c) wins there and is not applied to other cards (e.g. "סופר" → סופר טל only on Tal's card)
+function ruleFor(desc, card){
+  const n = normDesc(desc); let best = null, score = -1;
+  for (const r of impData().rules) {
+    if (!r.m || !n.includes(r.m) || (r.c && r.c !== card)) continue;
+    const sc = r.m.length + (r.c ? 1000 : 0); if (sc > score) { best = r; score = sc; }
+  }
   return best;
 }
 function ruleToValue(r){
@@ -92,7 +132,7 @@ function ruleToValue(r){
   if (r.v.t === 'i') { const k = IMP.incs.indexOf(r.v.n); return k >= 0 ? 'i:' + k : ''; }
   return '';
 }
-function seenHashes(){ const s = new Set(); for (const l of impData().log) for (const h of l.hashes || []) s.add(h); return s; }
+function seenHashes(){ const s = new Set(); for (const l of impData().log) for (const h of l.hashes || []) s.add(h); for (const q of impData().pending) s.add(q.h); return s; }
 function buildRows(kind, items){
   IMP.cats = catList(); IMP.incs = incList();
   const seen = seenHashes(), cnt = {};
@@ -101,8 +141,8 @@ function buildRows(kind, items){
     cnt[base] = (cnt[base] || 0) + 1;
     const h = base + '|' + cnt[base];
     const row = {...it, h, dup:seen.has(h), v:'', why:''};
-    const rule = ruleFor(it.desc);
-    if (row.dup) { row.v = 'skip'; row.why = 'נקלט בעבר'; }
+    const rule = ruleFor(it.desc, it.card);
+    if (row.dup) { row.v = 'skip'; row.why = impData().pending.some(q => q.h === h) ? 'ממתין לתשובה' : 'נקלט בעבר'; }
     else if (rule) { row.v = ruleToValue(rule); row.why = row.v ? 'לפי כלל' : ''; }
     else if (kind === 'bank' && it.amt > 0 && CARD_RX.test(it.desc)) { row.v = 'skip'; row.why = 'חיוב כרטיס – מפורט בקובץ האשראי'; }
     return row;
@@ -137,33 +177,35 @@ function applyDelta(x, sign){
   if (x.t === 'e') { const it = ensureItem(x.y, x.d, x.i); it.months[x.m] = r2((+it.months[x.m] || 0) + sign * x.v); }
   else if (x.t === 'i') { const r = ensureInc(x.y, x.n); r.months[x.m] = r2((+r.months[x.m] || 0) + sign * x.v); }
 }
-function learnRule(desc, v){
+function learnRule(desc, v, card){
   const m = normDesc(desc); if (m.length < 2) return;
-  const rules = impData().rules, i = rules.findIndex(r => r.m === m);
-  if (i >= 0) rules[i].v = v; else rules.push({m, v});
+  const rules = impData().rules, i = rules.findIndex(r => r.m === m && (r.c || '') === (card || ''));
+  if (i >= 0) rules[i].v = v; else rules.push(card ? {m, v, c:card} : {m, v});
 }
 function commitTx(){
-  const ip = impData(), deltas = [], hashes = [];
+  const ip = impData(), deltas = [], hashes = [], later = [], id = Date.now();
   let total = 0;
   for (const r of IMP.rows) {
     if (!r.v) continue;
-    if (r.v === 'skip') { if (!r.dup) { hashes.push(r.h); if (IMP.learn && r.why !== 'חיוב כרטיס – מפורט בקובץ האשראי' && r.why !== 'לפי כלל' && r.touched) learnRule(r.desc, {t:'s'}); } continue; }
+    if (r.v === 'later') { if (!r.dup) later.push(r); continue; }
+    if (r.v === 'skip') { if (!r.dup) { hashes.push(r.h); if (IMP.learn && r.why !== 'חיוב כרטיס – מפורט בקובץ האשראי' && r.why !== 'לפי כלל' && r.touched) learnRule(r.desc, {t:'s'}, r.card); } continue; }
     const {y, m} = rowMonth(r);
     if (r.v.startsWith('e:')) {
       const c = IMP.cats[+r.v.slice(2)];
       const x = {t:'e', y, d:c.d, i:c.i, m, v:r.amt}; applyDelta(x, 1); deltas.push(x); total += r.amt;
-      if (IMP.learn && r.touched) learnRule(r.desc, {t:'e', d:c.d, i:c.i});
+      if (IMP.learn && r.touched) learnRule(r.desc, {t:'e', d:c.d, i:c.i}, r.card);
     } else if (r.v.startsWith('i:')) {
       const n = IMP.incs[+r.v.slice(2)];
       const x = {t:'i', y, n, m, v:-r.amt}; applyDelta(x, 1); deltas.push(x);
-      if (IMP.learn && r.touched) learnRule(r.desc, {t:'i', n});
+      if (IMP.learn && r.touched) learnRule(r.desc, {t:'i', n}, r.card);
     }
     hashes.push(r.h);
   }
-  if (!deltas.length && !hashes.length) return toast('אין שורות מסווגות לקליטה');
-  ip.log.unshift({id:Date.now(), kind:IMP.kind, file:IMP.file, date:today(), n:deltas.length, total:r2(total), deltas, hashes});
+  if (!deltas.length && !hashes.length && !later.length) return toast('אין שורות מסווגות לקליטה');
+  for (const r of later) { const {y, m} = rowMonth(r); ip.pending.push({id:id + '-' + ip.pending.length, imp:id, kind:IMP.kind, file:IMP.file, desc:r.desc, amt:r.amt, date:ymKey(r.date) + '-' + String(r.date.getDate()).padStart(2, '0'), y, m, h:r.h, card:r.card || ''}); }
+  ip.log.unshift({id, kind:IMP.kind, file:IMP.file, date:today(), n:deltas.length, total:r2(total), deltas, hashes});
   markDirty();
-  toast(`נקלטו ${deltas.length} תנועות. לחצו "שמירה" כדי לשמור.`, 4000);
+  toast(`נקלטו ${deltas.length} תנועות${later.length ? ` · ${later.length} נשמרו כשאלות פתוחות` : ''}. לחצו "שמירה" כדי לשמור.`, 4500);
   resetImp(); render();
 }
 function undoImport(id){
@@ -171,15 +213,38 @@ function undoImport(id){
   const l = ip.log[i];
   if (l.kind === 'pen') { for (const x of l.changes) { const a = D().assets.find(a => a.name === x.name); if (a) Object.assign(a, x.prev); } }
   else for (const x of l.deltas || []) applyDelta(x, -1);
+  ip.pending = ip.pending.filter(q => q.imp !== l.id); // its open questions go too
   ip.log.splice(i, 1); markDirty(); toast('הקליטה בוטלה'); render();
 }
-function resetImp(){ if (IMP.pdfUrl) URL.revokeObjectURL(IMP.pdfUrl); Object.assign(IMP, {file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, pen:{}, penRows:[], pdfUrl:null, msg:''}); }
+function resetImp(){ if (IMP.pdfUrl) URL.revokeObjectURL(IMP.pdfUrl); Object.assign(IMP, {file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, pen:{}, penRows:[], pdfUrl:null, msg:'', card:'', pdfInfo:null}); }
 
 /* ---------- file handling ---------- */
-async function onTxFile(file, kind){
+async function onCardPdf(files){
+  resetImp(); IMP.kind = 'card'; IMP.file = files.map(f => f.name).join(', ');
+  try {
+    let items = []; const info = [];
+    for (const f of files) {
+      const r = parseCardPdf(await pdfLines(f));
+      if (!r.items.length) { info.push({t:`${f.name}: לא זוהו עסקאות`, bad:true}); continue; }
+      if (r.card) IMP.card = r.card;
+      const tot = r2(sum(r.items.map(i => i.amt))), ok = r.total == null || Math.abs(tot - r.total) < 0.02;
+      info.push({t:`${r.period ? MONTHS[r.period.getMonth()] + ' ' + r.period.getFullYear() : f.name}${r.card ? ' · כרטיס ' + r.card : ''}: ${r.items.length} עסקאות, ${plain(tot)}${r.total == null ? '' : ok ? ' ✓ תואם לסה״כ בדוח' : ` ⚠ בדוח כתוב ${plain(r.total)}`}`, bad:!ok});
+      items = items.concat(r.items);
+    }
+    IMP.pdfInfo = info;
+    items.sort((a, b) => a.date - b.date);
+    IMP.rows = buildRows('card', items);
+    if (!items.length) IMP.msg = 'לא זיהיתי עסקאות בקובץ ה־PDF. אפשר להוריד מהאתר קובץ אקסל במקום.';
+  } catch (e) { console.error(e); IMP.msg = 'לא הצלחתי לקרוא את ה־PDF: ' + e.message; }
+  render();
+}
+async function onTxFile(input, kind){
+  const files = Array.from(input.length != null ? input : [input]);
+  if (kind === 'card' && files.every(f => /\.pdf$/i.test(f.name))) return onCardPdf(files);
+  const file = files.find(f => !/\.pdf$/i.test(f.name)) || files[0];
   resetImp(); IMP.kind = kind; IMP.file = file.name;
   if (!window.XLSX) { IMP.msg = 'רכיב קריאת האקסל לא נטען. רעננו את הדף ונסו שוב.'; return render(); }
-  if (/\.pdf$/i.test(file.name)) { IMP.msg = 'קובץ PDF לא נקרא כאן. הורידו מהאתר את הקובץ בפורמט אקסל (xlsx/xls) או CSV.'; return render(); }
+  if (/\.pdf$/i.test(file.name)) { IMP.msg = 'קובץ PDF של בנק לא נקרא כאן. הורידו מהאתר את הקובץ בפורמט אקסל (xlsx/xls) או CSV.'; return render(); }
   try {
     IMP.sheets = await readSheets(file);
     let items = [];
@@ -203,6 +268,138 @@ function reExtract(){
   render();
 }
 
+/* ---------- asking: suggestions and questions ---------- */
+// keyword hints: [what the business name looks like, which category names fit, prefer the card owner's own row]
+const HINTS = [
+  [/סופר.?פארם|בית מרקחת|\bbe\b|גוד פארם/i, /פארם/],
+  [/סופר|שופרסל|רמי לוי|יוחננוף|ויקטורי|טיב טעם|קואופ|מגה|אושר עד|חצי חינם|משק |מכולת|מינימרקט|ירקות|פירות|עמיר שיווק|נתיב החסד/i, /^סופר(?! פארם)/, true],
+  [/temu|ali.?express|shein/i, /TEMO|ALI/i],
+  [/amazon/i, /AMAZON/i], [/iherb/i, /iherb/i], [/ksp/i, /KSP/i], [/דקטלון|decathlon/i, /דקאטלון/],
+  [/מסעד|קפה|ארומה|קפיט|פיצ|בורגר|סושי|יאמי|שווארמ|פלאפל|גלידה|wolt|וולט|תן ביס|מאפ|בייקרי/i, /^מסעדות ויציאות|^קפה|מסעדות/],
+  [/ד"?ר |מרפא|קליניק|אסותא|רופא|שיניים|פיזיו|אופטי|רפוא/i, /^טיפולים|^רפואה/, true, 'בריאות'],
+  [/חניון|חניה|פנגו|סלופארק|cello/i, /חני/], [/דלק|סונול|דור אלון|\bten\b|yellow|פז /i, /דלק|תחבורה/],
+  [/גן |חינוך|בית ספר|מתנ"?ס|חוג/i, /^גן|^חוג|^לימודים/],
+  [/איקאה|ikea|הום סנטר|ace|מקס סטוק|max stock|מקס ראשון|ביג |שקם|יוניברס/i, /כל מיני/],
+  [/ספר|סטימצקי|צעצוע|toys|משחק/i, /ספרים|משחקים/],
+  [/כושר|פיטנס|fitness|סטודיו/i, /כושר|אימונים/, true, 'ספורט'],
+];
+function cardOwner(card){ const o = card && impData().cards[card]; return o ? (D().settings.people || {})[o] || '' : ''; }
+function suggestFor(r){
+  const out = [], add = v => { if (v && v !== 'skip' && !out.includes(v)) out.push(v); };
+  const n = normDesc(r.desc);
+  for (const ru of impData().rules) if (ru.m && n.includes(ru.m)) add(ruleToValue(ru)); // learned on another card
+  const owner = cardOwner(r.card), others = Object.values(D().settings.people || {}).filter(x => x && x !== owner);
+  for (const [rx, cat, own] of HINTS) {
+    if (!rx.test(r.desc)) continue;
+    let ks = IMP.cats.map((c, k) => ({c, k})).filter(x => cat.test(x.c.i));
+    if (own && owner) {
+      const mine = ks.filter(x => x.c.i.includes(owner));
+      if (mine.length) ks = mine;
+      else { // e.g. only "טיפולים רונן" exists → offer a new "טיפולים טל" row in the same section
+        const other = ks.find(x => others.some(o => x.c.i.includes(o)));
+        if (other) { const o = others.find(o => other.c.i.includes(o)); add('n:' + other.c.d + '|' + other.c.i.replace(o, owner)); }
+        ks = ks.filter(x => !others.some(o => x.c.i.includes(o)));
+      }
+    }
+    ks.slice(0, 3).forEach(x => add('e:' + x.k));
+  }
+  if (!out.length) { // words of the business name that appear in a category name
+    const words = r.desc.split(/[\s\-–.,"']+/).filter(w => w.length >= 3 && !/בע"?מ|ראשון|ציונה/.test(w));
+    IMP.cats.forEach((c, k) => { const cw = c.i.split(/[\s\-–\/(),"']+/); if (words.some(w => cw.includes(w))) add('e:' + k); });
+  }
+  return out.slice(0, 3);
+}
+const valLabel = v => v === 'skip' ? 'לא לקלוט' : v.startsWith('e:') ? IMP.cats[+v.slice(2)]?.i : v.startsWith('i:') ? 'הכנסה: ' + IMP.incs[+v.slice(2)] : v.startsWith('n:') ? '＋ ' + v.slice(2).split('|')[1] + ' (שורה חדשה)' : '';
+// a new expense row: create it (in every year that has the section) and refresh the category list without breaking existing choices
+function addCategory(dom, name){
+  const keep = r => r.v && r.v.startsWith('e:') ? IMP.cats[+r.v.slice(2)] : null;
+  const memo = IMP.rows.map(keep);
+  ensureItem(lastYearOf(D().expenses), dom, name); markDirty();
+  IMP.cats = catList();
+  IMP.rows.forEach((r, i) => { const c = memo[i]; if (c) r.v = 'e:' + IMP.cats.findIndex(x => x.d === c.d && x.i === c.i); });
+  return 'e:' + IMP.cats.findIndex(x => x.d === dom && x.i === name);
+}
+// one question per business: all rows with the same name are answered together
+function questionGroups(rows){
+  const g = new Map();
+  rows.forEach(r => { const k = normDesc(r.desc) + '|' + (r.card || ''); if (!g.has(k)) g.set(k, {desc:r.desc, card:r.card, rows:[]}); g.get(k).rows.push(r); });
+  return [...g.values()];
+}
+function questionHtml(q, idx, kind, src){
+  const tot = sum(q.rows.map(r => r.amt)), sug = suggestFor(q.rows[0]);
+  const ds = [...new Set(q.rows.map(r => fmtDate(r.date instanceof Date ? r.date : new Date(r.date))))], dates = ds.slice(0, 3).join(', ') + (ds.length > 3 ? '…' : '');
+  return `<div class="q">
+    <div class="q-h"><b>${esc(q.desc)}</b><span class="hint">${q.rows.length > 1 ? q.rows.length + ' עסקאות · ' : ''}${money(kind === 'bank' && tot < 0 ? -tot : tot)}${tot < 0 ? (kind === 'bank' ? ' (זכות)' : ' (זיכוי)') : ''} · ${dates}${q.card ? ' · כרטיס ' + esc(q.card) : ''}</span></div>
+    <div class="q-opts">${sug.length ? '<span class="hint">אולי:</span>' : ''}${sug.map(v => `<button class="btn small q-sug" type="button" data-q="${src}:${idx}" data-v="${v}">${esc(valLabel(v))}</button>`).join('')}
+      <select class="inp q-sel" data-qsel="${src}:${idx}">${catOptions({v:'', amt:tot}, kind).replace('— לבחירה —', sug.length ? 'משהו אחר…' : 'לאן לשייך?')}</select>
+      <button class="btn small ghost" type="button" data-qnew="${src}:${idx}">＋ שורה חדשה</button>
+      ${src === 'now' ? `<button class="btn small ghost" type="button" data-q="${src}:${idx}" data-v="later" title="לקלוט את השאר ולשמור את השאלה הזאת לאחר כך">אחר כך</button>` : ''}</div>
+    ${IMP.newFor === src + ':' + idx ? `<div class="q-opts"><select class="inp q-sel" id="qnDom">${[...new Set(IMP.cats.map(c => c.d))].map(d => `<option>${esc(d)}</option>`).join('')}</select><input class="inp" id="qnName" placeholder="שם השורה, למשל: טיפולים ${esc(cardOwner(q.card) || '')}" style="width:auto;min-width:200px"><button class="btn small primary" type="button" id="qnAdd" data-qkey="${src}:${idx}">הוספה ושיוך</button></div>` : ''}
+  </div>`;
+}
+function ownerQuestionHtml(){
+  if (!IMP.card || impData().cards[IMP.card]) return '';
+  const pp = D().settings.people || {};
+  return `<div class="q"><div class="q-h"><b>של מי כרטיס ${esc(IMP.card)}?</b><span class="hint">כדי שסופר, טיפולים וכו׳ ישויכו לשורה של בעל הכרטיס</span></div>
+    <div class="q-opts">${Object.entries(pp).map(([k, n]) => `<button class="btn small" type="button" data-owner="${k}">${esc(n)}</button>`).join('')}<button class="btn small ghost" type="button" data-owner="shared">משותף</button></div></div>`;
+}
+function askHtml(kind){
+  const open = IMP.rows.filter(r => !r.v && !r.dup);
+  IMP.qs = questionGroups(open);
+  const own = ownerQuestionHtml();
+  if (!IMP.qs.length && !own) return '';
+  return `<section class="card ask"><div class="card-h"><h3>יש לי ${IMP.qs.length + (own ? 1 : 0)} שאלות</h3><span class="hint">לא ידעתי לאן לשייך. תשובה אחת חלה על כל העסקאות מאותו בית עסק ונשמרת ככלל לפעם הבאה. ״אחר כך״ – קולטים את השאר והשאלה נשמרת.</span></div>
+    ${own}${IMP.qs.map((q, i) => questionHtml(q, i, kind, 'now')).join('')}</section>`;
+}
+function pendingOf(kind){ return impData().pending.filter(q => q.kind === kind); }
+function pendingHtml(kind){
+  const list = pendingOf(kind); if (!list.length) return '';
+  if (!(IMP.kind === kind && IMP.file && IMP.cats)) { IMP.cats = catList(); IMP.incs = incList(); }
+  IMP.pq = questionGroups(list.map(q => ({...q, date:new Date(q.date)})));
+  return `<section class="card ask"><div class="card-h"><h3>שאלות פתוחות מקליטות קודמות (${IMP.pq.length})</h3><span class="hint">הסכום יתווסף לחודש של העסקה ברגע שתענו</span></div>
+    ${IMP.pq.map((q, i) => questionHtml(q, i, kind, 'old')).join('')}</section>`;
+}
+function answerPending(q, v){
+  const ip = impData(), deltas = [], hashes = []; let total = 0;
+  for (const p of q.rows) {
+    hashes.push(p.h);
+    if (v.startsWith('e:')) { const c = IMP.cats[+v.slice(2)]; const x = {t:'e', y:p.y, d:c.d, i:c.i, m:p.m, v:p.amt}; applyDelta(x, 1); deltas.push(x); total += p.amt; }
+    else if (v.startsWith('i:')) { const x = {t:'i', y:p.y, n:IMP.incs[+v.slice(2)], m:p.m, v:-p.amt}; applyDelta(x, 1); deltas.push(x); }
+  }
+  const ids = new Set(q.rows.map(p => p.id));
+  ip.pending = ip.pending.filter(p => !ids.has(p.id));
+  ip.log.unshift({id:Date.now(), kind:q.rows[0].kind, file:'תשובה: ' + q.desc, date:today(), n:deltas.length, total:r2(total), deltas, hashes});
+  learnRule(q.desc, v === 'skip' ? {t:'s'} : v.startsWith('e:') ? {t:'e', d:IMP.cats[+v.slice(2)].d, i:IMP.cats[+v.slice(2)].i} : {t:'i', n:IMP.incs[+v.slice(2)]}, q.card);
+  markDirty(); toast(v === 'skip' ? 'סומן כ״לא לקלוט״' : `נוסף ל״${valLabel(v)}״. לחצו "שמירה" כדי לשמור.`, 3500); keepScroll();
+}
+function bindAsk(){
+  const answer = (key, v) => {
+    if (!v) return;
+    if (v.startsWith('n:')) { const [dom, name] = v.slice(2).split('|'); v = addCategory(dom, name); IMP.newFor = null; }
+    const [src, i] = key.split(':'), q = (src === 'now' ? IMP.qs : IMP.pq)[+i]; if (!q) return;
+    if (src === 'old') return answerPending(q, v);
+    q.rows.forEach(r => { r.v = v; r.touched = v !== 'later'; r.why = v === 'later' ? 'אחר כך' : 'תשובה'; });
+    keepScroll();
+  };
+  $$('[data-q]').forEach(b => b.onclick = () => answer(b.dataset.q, b.dataset.v));
+  $$('[data-qsel]').forEach(s => s.onchange = () => answer(s.dataset.qsel, s.value));
+  $$('[data-qnew]').forEach(b => b.onclick = () => { IMP.newFor = IMP.newFor === b.dataset.qnew ? null : b.dataset.qnew; keepScroll(); setTimeout(() => $('#qnName')?.focus(), 50); });
+  const qa = $('#qnAdd'); if (qa) qa.onclick = () => { const name = $('#qnName').value.trim(); if (!name) return $('#qnName').focus(); answer(qa.dataset.qkey, 'n:' + $('#qnDom').value + '|' + name); };
+  $$('[data-owner]').forEach(b => b.onclick = () => {
+    impData().cards[IMP.card] = b.dataset.owner; markDirty(); keepScroll(); // suggestions now prefer the owner's rows
+  });
+}
+function navBadges(){
+  if (!S.data) return;
+  for (const [tab, kind] of [['upCard', 'card'], ['upBank', 'bank']]) {
+    const b = $(`#nav .nav-btn[data-tab="${tab}"]`); if (!b) continue;
+    const n = questionGroups(pendingOf(kind)).length; let s = b.querySelector('.nav-badge');
+    if (!n) { s?.remove(); continue; }
+    if (!s) { s = document.createElement('span'); s.className = 'nav-badge'; b.appendChild(s); }
+    s.textContent = n; s.title = n + ' שאלות פתוחות';
+  }
+}
+
 /* ---------- views: bank / card ---------- */
 const UP_ICON = '<path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>';
 function howTo(kind){
@@ -210,7 +407,7 @@ function howTo(kind){
     <p>נכנסים לאתר הבנק ← <b>עובר ושב</b> ← <b>תנועות בחשבון</b> ← בוחרים טווח תאריכים ← <b>ייצוא לאקסל</b>. רוב הבנקים (לאומי, הפועלים, דיסקונט, מזרחי, הבינלאומי) מאפשרים xls או CSV, ושני הפורמטים עובדים כאן.</p>
     <p>חיובי כרטיסי אשראי בעו״ש מסומנים אוטומטית כ״דילוג״, כי הפירוט שלהם נקלט מקובץ האשראי. כך אותה הוצאה לא נספרת פעמיים.</p></details>`;
   return `<details class="note"><summary><b>איך מורידים את הקובץ מחברת האשראי?</b></summary>
-    <p><b>ישראכרט / אמריקן אקספרס:</b> האזור האישי ← פירוט עסקאות ← ייצוא לאקסל.<br><b>מקס:</b> האזור האישי ← פירוט החיובים ← הורדה לאקסל.<br><b>כאל:</b> האזור האישי ← פירוט עסקאות ← ייצוא.</p>
+    <p><b>ישראכרט / אמריקן אקספרס:</b> האזור האישי ← פירוט עסקאות ← ייצוא לאקסל.<br><b>מקס:</b> האזור האישי ← פירוט החיובים ← הורדה לאקסל.<br><b>כאל:</b> האזור האישי ← פירוט עסקאות ← ייצוא.<br><b>כרטיס לאומי (דרך אתר הבנק):</b> כרטיסי אשראי ← פירוט עסקאות ← שמירה/הדפסה כ־PDF. אפשר לבחור כמה קבצים (חודשים) יחד.</p>
     <p>הסכום שנקלט הוא <b>סכום החיוב</b> בשקלים. כדי שהחודש יתאים לדף החיוב ולא לתאריך הרכישה, בוחרים ״לפי תאריך החיוב״ או חודש ספציפי.</p></details>`;
 }
 function catOptions(r, kind){
@@ -219,7 +416,7 @@ function catOptions(r, kind){
   const exp = Object.entries(groups).map(([d, o]) => `<optgroup label="${esc(oneLine(d))}">${o.join('')}</optgroup>`).join('');
   const inc = `<optgroup label="הכנסות">${IMP.incs.map((n, k) => `<option value="i:${k}" ${r.v === 'i:' + k ? 'selected' : ''}>${esc(n)}</option>`).join('')}</optgroup>`;
   const incFirst = kind === 'bank' && r.amt < 0;
-  return `<option value="" ${!r.v ? 'selected' : ''}>— לבחירה —</option><option value="skip" ${r.v === 'skip' ? 'selected' : ''}>דילוג (לא לקלוט)</option>${incFirst ? inc + exp : exp + (kind === 'bank' ? inc : '')}`;
+  return `<option value="" ${!r.v ? 'selected' : ''}>— לבחירה —</option><option value="skip" ${r.v === 'skip' ? 'selected' : ''}>דילוג (לא לקלוט)</option>${r.v === 'later' ? '<option value="later" selected>לשאול אותי אחר כך</option>' : ''}${incFirst ? inc + exp : exp + (kind === 'bank' ? inc : '')}`;
 }
 function monthOptions(){
   const opts = [`<option value="tx" ${IMP.monthMode === 'tx' ? 'selected' : ''}>לפי תאריך העסקה</option>`];
@@ -258,29 +455,32 @@ function rulesHtml(){
   const lbl = v => v.t === 's' ? 'דילוג' : v.t === 'i' ? 'הכנסה: ' + v.n : oneLine(v.d) + ' ← ' + v.i;
   return `<details class="card"><summary><b>כללי סיווג שנלמדו</b> <span class="hint">(${rules.length})</span></summary>
     <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>כשהתיאור מכיל</th><th>מסווג ל־</th><th></th></tr></thead><tbody>
-    ${rules.map((r, i) => `<tr><td>${esc(r.m)}</td><td>${esc(lbl(r.v))}</td><td><button class="btn small danger" data-delrule="${i}" type="button">מחיקה</button></td></tr>`).join('')}
+    ${rules.map((r, i) => `<tr><td>${esc(r.m)}${r.c ? ` <span class="chip var">כרטיס ${esc(r.c)}</span>` : ''}</td><td>${esc(lbl(r.v))}</td><td><button class="btn small danger" data-delrule="${i}" type="button">מחיקה</button></td></tr>`).join('')}
     </tbody></table></div></details>`;
 }
 function txView(kind){
   const has = IMP.kind === kind && IMP.file;
   const rows = has ? IMP.rows : [];
-  const open = rows.filter(r => !r.v), assigned = rows.filter(r => r.v && r.v !== 'skip');
+  const open = rows.filter(r => !r.v), assigned = rows.filter(r => r.v && r.v !== 'skip' && r.v !== 'later'), later = rows.filter(r => r.v === 'later' && !r.dup);
   const out = sum(rows.filter(r => r.amt > 0).map(r => r.amt)), inn = -sum(rows.filter(r => r.amt < 0).map(r => r.amt));
   const shown = IMP.onlyOpen ? rows.filter(r => !r.v) : rows;
   return `
-  <section class="card"><div class="card-h"><h3>העלאת קובץ ${kind === 'bank' ? 'תנועות בנק' : 'פירוט אשראי'}</h3><span class="hint">xlsx · xls · csv · הקובץ נקרא רק במכשיר הזה</span></div>
-    <label class="btn primary" style="justify-self:start">${UP_ICON ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>` : ''}בחירת קובץ<input type="file" id="txFile" accept=".xlsx,.xls,.csv,.xlsm,.pdf" hidden></label>
+  <section class="card"><div class="card-h"><h3>העלאת קובץ ${kind === 'bank' ? 'תנועות בנק' : 'פירוט אשראי'}</h3><span class="hint">xlsx · xls · csv${kind === 'card' ? ' · PDF של כרטיס לאומי' : ''} · הקובץ נקרא רק במכשיר הזה</span></div>
+    <label class="btn primary" style="justify-self:start">${UP_ICON ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>` : ''}בחירת קובץ${kind === 'card' ? ' (אפשר כמה)' : ''}<input type="file" id="txFile" accept=".xlsx,.xls,.csv,.xlsm,.pdf" ${kind === 'card' ? 'multiple' : ''} hidden></label>
     ${has ? `<p style="margin:0">קובץ: <b>${esc(IMP.file)}</b> <button class="btn small ghost" id="txClear" type="button">ניקוי</button></p>` : ''}
     ${IMP.msg && IMP.kind === kind ? `<p class="note" style="margin:0">${esc(IMP.msg)}</p>` : ''}
+    ${has && IMP.pdfInfo ? `<ul class="pdf-info">${IMP.pdfInfo.map(x => `<li class="${x.bad ? 'down' : ''}">${esc(x.t)}</li>`).join('')}</ul>` : ''}
     ${howTo(kind)}
   </section>
+  ${pendingHtml(kind)}
   ${has ? mapperHtml() : ''}
+  ${has && rows.length ? askHtml(kind) : ''}
   ${has && rows.length ? `
   <div class="kpis">
     <div class="kpi"><span class="lbl">תנועות בקובץ</span><span class="val">${rows.length}</span><span class="sub">${rows.filter(r => r.dup).length} כבר נקלטו בעבר</span></div>
     <div class="kpi"><span class="lbl">${kind === 'bank' ? 'יציאות (חובה)' : 'סה״כ חיובים'}</span><span class="val down">${money(out)}</span><span class="sub">${inn ? (kind === 'bank' ? 'כניסות: ' : 'זיכויים: ') + plain(inn) : ''}</span></div>
     <div class="kpi"><span class="lbl">מסווגות</span><span class="val up">${assigned.length}</span><span class="sub">${rows.filter(r => r.v === 'skip').length} בדילוג</span></div>
-    <div class="kpi"><span class="lbl">ממתינות לסיווג</span><span class="val ${open.length ? 'down' : ''}">${open.length}</span><span class="sub">שורות בלי סיווג לא ייקלטו</span></div>
+    <div class="kpi"><span class="lbl">ממתינות לסיווג</span><span class="val ${open.length ? 'down' : ''}">${open.length}</span><span class="sub">${later.length ? later.length + ' לאחר כך · ' : ''}שורות בלי סיווג לא ייקלטו</span></div>
   </div>
   <section class="card">
     <div class="card-h"><h3>סיווג תנועות</h3><span class="hint">סיווג של שורה אחת חל גם על שורות זהות שעוד לא סווגו</span></div>
@@ -292,20 +492,20 @@ function txView(kind){
     <div class="tbl-wrap" style="max-height:60vh"><table><thead><tr><th>תאריך</th><th>תיאור</th><th class="n">סכום</th><th>חודש</th><th>סיווג</th></tr></thead><tbody>
     ${shown.map(r => { const i = rows.indexOf(r), mo = rowMonth(r); return `<tr ${r.dup ? 'style="opacity:.55"' : ''}>
       <td>${fmtDate(r.date)}</td>
-      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.desc)}">${esc(r.desc)}${r.why ? ` <span class="chip ${r.why === 'לפי כלל' ? 'fixed' : 'var'}">${esc(r.why)}</span>` : ''}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.desc)}">${esc(r.desc)}${r.why ? ` <span class="chip ${r.why === 'לפי כלל' || r.why === 'תשובה' ? 'fixed' : 'var'}">${esc(r.why)}</span>` : ''}</td>
       <td class="n ${r.amt < 0 ? 'up' : ''}">${money(kind === 'bank' && r.amt < 0 ? -r.amt : r.amt)}${r.amt < 0 ? ` <span class="chip yes">${kind === 'bank' ? 'זכות' : 'זיכוי'}</span>` : ''}</td>
       <td>${MS[mo.m]} ${mo.y.slice(2)}</td>
       <td><select class="inp" style="min-width:210px;padding:5px 8px" data-row="${i}">${catOptions(r, kind)}</select></td></tr>`; }).join('')}
     ${!shown.length ? '<tr><td colspan="5" class="hint">כל התנועות סווגו ✓</td></tr>' : ''}
     </tbody></table></div>
-    <div class="row"><button class="btn primary" id="txCommit" type="button" ${assigned.length || rows.some(r => r.v === 'skip' && !r.dup) ? '' : 'disabled'}>קליטת ${assigned.length} תנועות ל${kind === 'bank' ? 'הוצאות ולהכנסות' : 'הוצאות'}</button>
+    <div class="row"><button class="btn primary" id="txCommit" type="button" ${assigned.length || later.length || rows.some(r => r.v === 'skip' && !r.dup) ? '' : 'disabled'}>קליטת ${assigned.length} תנועות ל${kind === 'bank' ? 'הוצאות ולהכנסות' : 'הוצאות'}${later.length ? ` (+${later.length} לשאלות פתוחות)` : ''}</button>
       <span class="hint">הסכומים <b>מתווספים</b> לסכום הקיים בכל קטגוריה וחודש. אפשר לבטל כל קליטה.</span></div>
   </section>` : ''}
   ${logHtml([kind])}
   ${rulesHtml()}`;
 }
 function txAfter(kind){
-  const f = $('#txFile'); if (f) f.onchange = e => { const file = e.target.files[0]; if (file) onTxFile(file, kind); };
+  const f = $('#txFile'); if (f) f.onchange = e => { const fs = e.target.files; if (fs && fs.length) onTxFile(fs, kind); };
   const c = $('#txClear'); if (c) c.onclick = () => { resetImp(); render(); };
   const mo = $('#txMonth'); if (mo) mo.onchange = () => { IMP.monthMode = mo.value; keepScroll(); };
   const oo = $('#txOnlyOpen'); if (oo) oo.onchange = () => { IMP.onlyOpen = oo.checked; keepScroll(); };
@@ -316,7 +516,7 @@ function txAfter(kind){
     keepScroll();
   });
   const cm = $('#txCommit'); if (cm) cm.onclick = commitTx;
-  bindMapper(); bindLogRules();
+  bindMapper(); bindLogRules(); bindAsk();
 }
 function bindMapper(){
   const ms = $('#mapSheet'); if (ms) ms.onchange = () => { IMP.map = IMP.sheets[+ms.value]; IMP.map.map ||= guessManual(IMP.map.rows); reExtract(); };

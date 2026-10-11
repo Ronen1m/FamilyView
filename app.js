@@ -278,6 +278,7 @@ function render(){
   const p = visiblePages().find(p => p.id === S.tab) || visiblePages()[0];
   S.tab = p.id;
   $$('#nav .nav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === p.id));
+  if (window.navBadges) navBadges(); // open import questions
   $('#pageTitle').textContent = p.t;
   setYearSel(p.year);
   $('#editBtn').hidden = !!p.sec;
