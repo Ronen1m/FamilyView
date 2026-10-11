@@ -127,11 +127,13 @@ function parseCardPdf(lines){
 
 /* ---------- classification ---------- */
 // a rule learned on a specific card (r.c) wins there and is not applied to other cards (e.g. "סופר" → סופר טל only on Tal's card)
-function ruleFor(desc, card){
-  const n = normDesc(desc); let best = null, score = -1;
+// rules with a reference amount (r.a) tell apart charges with the same name (e.g. 3 policies of one insurer): the closest amount wins
+function ruleFor(desc, card, amt){
+  const n = normDesc(desc); let best = null, score = -1, gap = Infinity;
   for (const r of impData().rules) {
     if (!r.m || !n.includes(r.m) || (r.c && r.c !== card)) continue;
-    const sc = r.m.length + (r.c ? 1000 : 0); if (sc > score) { best = r; score = sc; }
+    const sc = r.m.length + (r.c ? 1000 : 0), g = r.a != null && amt != null ? Math.abs(r.a - amt) : Infinity;
+    if (sc > score || (sc === score && g < gap)) { best = r; score = sc; gap = g; }
   }
   return best;
 }
@@ -151,7 +153,7 @@ function buildRows(kind, items){
     cnt[base] = (cnt[base] || 0) + 1;
     const h = base + '|' + cnt[base];
     const row = {...it, h, dup:seen.has(h), v:'', why:''};
-    const rule = ruleFor(it.desc, it.card);
+    const rule = ruleFor(it.desc, it.card, it.amt);
     if (row.dup) { row.v = 'skip'; row.why = impData().pending.some(q => q.h === h) ? 'ממתין לתשובה' : 'נקלט בעבר'; }
     else if (rule) { row.v = ruleToValue(rule); row.why = row.v ? 'לפי כלל' : ''; }
     else if (kind === 'bank' && it.amt > 0 && CARD_RX.test(it.desc)) { row.v = 'skip'; row.why = 'חיוב כרטיס – מפורט בקובץ האשראי'; }
@@ -189,7 +191,7 @@ function applyDelta(x, sign){
 }
 function learnRule(desc, v, card){
   const m = normDesc(desc); if (m.length < 2) return;
-  const rules = impData().rules, i = rules.findIndex(r => r.m === m && (r.c || '') === (card || ''));
+  const rules = impData().rules, i = rules.findIndex(r => r.m === m && (r.c || '') === (card || '') && r.a == null);
   if (i >= 0) rules[i].v = v; else rules.push(card ? {m, v, c:card} : {m, v});
 }
 // amounts already in a month that did not come from an earlier import are usually the plan (copied forward).
@@ -329,7 +331,7 @@ function reExtract(){
 // keyword hints: [what the business name looks like, which category names fit, prefer the card owner's own row]
 const HINTS = [
   [/סופר.?פארם|בית מרקחת|\bbe\b|גוד פארם/i, /פארם/],
-  [/סופר|שופרסל|רמי לוי|יוחננוף|ויקטורי|טיב טעם|קואופ|מגה|אושר עד|חצי חינם|משק |מכולת|מינימרקט|ירקות|פירות|עמיר שיווק|נתיב החסד|קשת טעמים/i, /^סופר(?! פארם)/, true],
+  [/סופר|שופרסל|רמי לוי|יוחננוף|ויקטורי|טיב טעם|קואופ|מגה|אושר עד|חצי חינם|משק |מכולת|מינימרקט|ירקות|פירות|עמיר שיווק|נתיב החסד|קשת טעמים|יוניברס/i, /^סופר(?! פארם)/, true],
   [/מאפ|פינקיצ'?ן|ללא גלוטן|לחם |בייקרי/i, /מאפי/, true],
   [/(ביטוח|בטוח) חיים/i, /ביטוח חיים/, false, 'amount'],
   [/ביטוח|בטוח|הראל|הפניקס|מגדל|כלל |איילון|מנורה/i, /ביטוח/, false, 'amount'],
@@ -344,7 +346,7 @@ const HINTS = [
   [/ד"?ר |מרפא|קליניק|אסותא|רופא|שיניים|פיזיו|אופטי|רפוא/i, /^טיפולים|^רפואה/, true, 'בריאות'],
   [/חניון|חניה|פנגו|סלופארק|cello/i, /חני/], [/דלק|סונול|דור אלון|\bten\b|yellow|פז /i, /דלק|תחבורה/],
   [/גן |חינוך|בית ספר|מתנ"?ס|חוג/i, /^גן|^חוג|^לימודים/],
-  [/איקאה|ikea|הום סנטר|ace|מקס סטוק|max stock|מקס ראשון|ביג |שקם|יוניברס/i, /כל מיני/],
+  [/איקאה|ikea|הום סנטר|ace|מקס סטוק|max stock|מקס ראשון|ביג |שקם/i, /כל מיני/],
   [/ספר|סטימצקי|צעצוע|toys|משחק/i, /ספרים|משחקים/],
   [/כושר|פיטנס|fitness|סטודיו/i, /כושר|אימונים/, true, 'ספורט'],
 ];
@@ -528,7 +530,7 @@ function rulesHtml(){
   const lbl = v => v.t === 's' ? 'דילוג' : v.t === 'i' ? 'הכנסה: ' + v.n : oneLine(v.d) + ' ← ' + v.i;
   return `<details class="card"><summary><b>כללי סיווג שנלמדו</b> <span class="hint">(${rules.length})</span></summary>
     <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>כשהתיאור מכיל</th><th>מסווג ל־</th><th></th></tr></thead><tbody>
-    ${rules.map((r, i) => `<tr><td>${esc(r.m)}${r.c ? ` <span class="chip var">כרטיס ${esc(r.c)}</span>` : ''}</td><td>${esc(lbl(r.v))}</td><td><button class="btn small danger" data-delrule="${i}" type="button">מחיקה</button></td></tr>`).join('')}
+    ${rules.map((r, i) => `<tr><td>${esc(r.m)}${r.c ? ` <span class="chip var">כרטיס ${esc(r.c)}</span>` : ''}${r.a != null ? ` <span class="chip var">≈ ${plain(r.a)}</span>` : ''}</td><td>${esc(lbl(r.v))}</td><td><button class="btn small danger" data-delrule="${i}" type="button">מחיקה</button></td></tr>`).join('')}
     </tbody></table></div></details>`;
 }
 function txView(kind){
