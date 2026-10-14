@@ -2,10 +2,10 @@
    - On install, saves the whole app (pages, code, libraries, icons, data) on the device.
    - Always tries the network first (so updates show immediately), but gives up after a few
      seconds and uses the saved copy – so a weak / missing connection never leaves a blank screen. */
-const CACHE = 'familyview-v4';
+const CACHE = 'familyview-v5';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
-  'app.js', 'import.js', 'solar.js', 'retire.js',
+  'app.js', 'import.js', 'solar.js', 'retire.js', 'pens.js',
   'vendor/chart.umd.js', 'vendor/xlsx.full.min.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png', 'icons/apple-touch-icon.png',
   'data/data.enc.json', 'data/demo.json',

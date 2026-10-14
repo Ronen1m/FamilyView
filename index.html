@@ -61,6 +61,49 @@ a{color:var(--accent)}
 .nav-badge{margin-inline-start:auto;min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--gold);color:#1b1b1b;font-size:12px;font-weight:700;display:inline-grid;place-items:center}
 .pdf-info{margin:0;padding-inline-start:18px;font-size:13.5px;display:grid;gap:2px}
 .pdf-info .down{color:var(--neg)}
+.pen-top{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;background:transparent;padding:8px 16px;border-radius:9px;font:600 15px var(--f-body);color:var(--muted);cursor:pointer;display:grid;gap:0;text-align:center}
+.seg button .hint{font-size:12px;font-weight:500}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.sec-h{font:700 18px var(--f-display);margin:6px 2px -4px}
+.fund-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}
+.pen-src{display:grid;gap:2px}
+.fam-line{font-size:14px}
+.pen-donut{grid-template-columns:minmax(0,190px) minmax(0,1fr)}
+.fund-list{display:none}
+.fl-item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:3px}
+.fl-item + .fl-item{margin-top:8px}
+.fl-h{display:flex;gap:8px;align-items:center}
+.fl-bal{margin-inline-start:auto;font:700 16px var(--f-display)}
+.fl-meta{font-size:13px}
+.fl-tot{display:flex;justify-content:space-between;background:var(--accent-soft)}
+@media (max-width:760px){
+  .card .tbl-wrap:has(+ .fund-list){display:none}
+  .fund-list{display:block}
+  .pen-donut{grid-template-columns:minmax(0,1fr)}
+  .seg{width:100%}.seg button{flex:1}
+}
+.fund{display:grid;gap:12px;align-content:start}
+.fund-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.fund-h h3{margin:0}
+.fund-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.fund-kpis>div{background:var(--surface-2);border-radius:10px;padding:10px 12px;display:grid;gap:2px;min-width:0}
+.fund-kpis .lbl{font-size:12.5px;color:var(--muted);font-weight:600}
+.fund-kpis b{font:700 17px var(--f-display)}
+.fund-dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 14px;margin:0}
+.fund-dl dt{font-size:12.5px;color:var(--muted)}
+.fund-dl dd{margin:0;font-weight:600;font-size:14px}
+.ret-tbl td,.ret-tbl th{white-space:nowrap}
+details.cover{border-top:1px solid var(--line);padding-top:8px}
+details.cover summary{cursor:pointer}
+.plain-list{margin:0;padding-inline-start:18px;display:grid;gap:4px;font-size:14px}
+.note-card{background:var(--gold-soft)}
+.pbar{display:grid;grid-template-columns:96px 1fr 44px;gap:10px;align-items:center;font-size:14px;margin:6px 0}
+.pbar-t{height:10px;background:var(--surface-2);border-radius:6px;overflow:hidden}
+.pbar-t i{display:block;height:100%;background:var(--accent);border-radius:6px}
+.mix-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.mix-chips .chip{background:var(--surface-2);color:var(--ink);font-weight:500}
 /* ---------- login ---------- */
 #login{min-height:100%;display:grid;place-items:center;padding:24px 16px}
 .login-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:28px 24px;box-shadow:var(--shadow);display:grid;gap:14px}
@@ -336,7 +379,7 @@ td.x-col{width:28px;padding-inline:4px}
 <script src="vendor/xlsx.full.min.js"></script>
 <script>/* load the newest app code every time (GitHub Pages caches files for ~10 minutes); import.js needs app.js first */
 (function(){var v=Date.now();function add(src,next){var s=document.createElement("script");s.src=src+"?v="+v;if(next)s.onload=next;document.body.appendChild(s);}
-add("app.js",function(){add("import.js",function(){add("solar.js",function(){add("retire.js");});});});})();
+add("app.js",function(){add("import.js",function(){add("solar.js",function(){add("retire.js",function(){add("pens.js");});});});});})();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});</script>
 </body>
 </html>
