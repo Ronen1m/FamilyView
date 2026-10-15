@@ -223,8 +223,38 @@ function chart(id, cfg){
   if (cfg.type === 'doughnut') { base.plugins.legend.display = false; base.cutout = '62%'; base.plugins.tooltip.callbacks = {label:c => ` ${c.label}: ${plain(c.parsed)}`}; delete base.interaction; }
   const opts = deepMerge(base, cfg.options || {});
   const plugins = cfg.type === 'doughnut' && cfg.pctLabels ? [pctLabelPlugin] : [];
+  if (cfg.type === 'bar' && cfg.totals !== false && opts.indexAxis !== 'y') { plugins.push(barTotalsPlugin); opts.layout = deepMerge(opts.layout || {}, {padding:{top:20}}); if (opts.scales?.y) opts.scales.y.grace = opts.scales.y.grace || '10%'; }
   S.charts.push(new Chart(el, {type:cfg.type, data:cfg.data, options:opts, plugins}));
 }
+/* writes the total above every column: stacked bars → the sum of the stack, side-by-side bars → each bar's own value.
+   Only visible bar series count (a line series such as "כסף פנוי" or "יעד" is left out). Narrow columns get the number turned upright. */
+const shortNum = v => { const a = Math.abs(v), sg = v < 0 ? '-' : ''; return sg + (a >= 1e6 ? +(a / 1e6).toFixed(1) + 'M' : a >= 1e4 ? Math.round(a / 1e3) + 'K' : a >= 1e3 ? +(a / 1e3).toFixed(1) + 'K' : Math.round(a)); };
+const barTotalsPlugin = {
+  id:'barTotals',
+  afterDatasetsDraw(ch){
+    const {ctx, chartArea} = ch, stacked = !!ch.options.scales?.y?.stacked;
+    const bars = ch.data.datasets.map((d, i) => ({d, i, meta:ch.getDatasetMeta(i)})).filter(x => (x.d.type || ch.config.type) === 'bar' && ch.isDatasetVisible(x.i));
+    if (!bars.length) return;
+    const groups = {};
+    if (stacked) bars.forEach(x => (groups[x.d.stack || '_'] ||= []).push(x)); else bars.forEach(x => groups[x.i] = [x]);
+    ctx.save();
+    ctx.fillStyle = css('--ink'); ctx.textAlign = 'center';
+    ctx.strokeStyle = css('--surface') || '#fff'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; // halo keeps the number readable over lines
+    const put = (t, x, y) => { ctx.strokeText(t, x, y); ctx.fillText(t, x, y); };
+    const n = ch.data.labels.length;
+    for (const g of Object.values(groups)) for (let j = 0; j < n; j++) {
+      let tot = 0, top = Infinity, bottom = -Infinity, x = null, w = 0;
+      for (const b of g) { const v = +b.d.data[j] || 0, el = b.meta.data[j]; if (!el) continue; tot += v; x = el.x; w = el.width || w; top = Math.min(top, el.y, el.base); bottom = Math.max(bottom, el.y, el.base); }
+      if (!tot || x == null) continue;
+      const txt = shortNum(tot), fs = Math.max(9, Math.min(12, w * 0.55));
+      ctx.font = `600 ${fs}px ${css('--f-body') || 'sans-serif'}`;
+      const tw = ctx.measureText(txt).width, neg = tot < 0;
+      if (tw <= w * 1.25) { ctx.textBaseline = neg ? 'top' : 'bottom'; put(txt, x, neg ? Math.min(bottom + 3, chartArea.bottom - fs) : Math.max(top - 3, chartArea.top - 18)); }
+      else { ctx.save(); ctx.translate(x, neg ? bottom + 3 : top - 3); ctx.rotate(-Math.PI / 2); ctx.textAlign = neg ? 'right' : 'left'; ctx.textBaseline = 'middle'; put(txt, 0, 0); ctx.restore(); }
+    }
+    ctx.restore();
+  },
+};
 /* writes each slice's share on the doughnut (slices under 3% are skipped to stay readable) */
 const pctLabelPlugin = {
   id:'pctLabels',
