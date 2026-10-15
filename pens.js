@@ -4,7 +4,34 @@
    Data lives in D().pensionReport = {asOf, produced, source, people:{p1:{…, funds:[…]}, p2:{…}}}. */
 
 const PEN_ICON = '<path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/><path d="M4 20h16"/>';
-const PEN = {who:'p1'};
+const PEN = {who:'p1', closed:store.get('pensClosed') || {}, sort:{study:{k:'balance', d:-1}, other:{k:'balance', d:-1}}};
+// a card whose body opens and closes from its header; open/closed is remembered on this device
+function box(id, title, hint, body, cls = '', extra = ''){
+  const closed = !!PEN.closed[id];
+  return `<section class="card pbox ${cls} ${closed ? 'closed' : ''}"><div class="card-h pbox-h" data-tog="${esc(id)}" role="button" tabindex="0" aria-expanded="${!closed}">
+    <h3><span class="chev" aria-hidden="true">▾</span>${title}</h3>${extra}${hint ? `<span class="hint">${hint}</span>` : ''}</div><div class="pbox-b">${body}</div></section>`;
+}
+// funds tables: click a column header to sort (first click: high → low)
+const SORT_KEYS = {provider:f => f.provider || '', balance:f => f.balance || 0, fee:f => f.feeAcc ?? -1, deposit:f => f.deposit || 0,
+  liquid:f => +(liquidAt(f) || 0), ytd:f => mainTrack(f)?.ret.ytd ?? -999, y1:f => mainTrack(f)?.ret.y1 ?? -999, a5:f => mainTrack(f)?.ret.a5 ?? -999};
+const SORT_LBL = {provider:'גוף · מסלול', balance:'צבירה', fee:'דמי ניהול', deposit:'הפקדה', liquid:'נזילה', ytd:'מתחילת השנה', y1:'12 ח׳', a5:'ממוצע 5ש׳'};
+function sth(kind, k, num = true){
+  const st = PEN.sort[kind], on = st.k === k;
+  return `<th class="${num ? 'n ' : ''}sortable ${on ? 'on' : ''}" data-sort="${kind}:${k}" title="מיון">${SORT_LBL[k]}<span class="arr">${on ? (st.d < 0 ? '▼' : '▲') : '↕'}</span></th>`;
+}
+function sortFunds(list, kind){
+  const st = PEN.sort[kind], fn = SORT_KEYS[st.k] || SORT_KEYS.balance;
+  return list.slice().sort((a, b) => { const x = fn(a), y = fn(b); return (typeof x === 'string' ? x.localeCompare(y, 'he') : x - y) * st.d; });
+}
+// small tables (returns, coverage): sort the rows in place by the clicked column
+function domSort(th){
+  const tbl = th.closest('table'), i = [...th.parentNode.children].indexOf(th), body = tbl.tBodies[0];
+  const d = th.dataset.d === '-1' ? 1 : -1; th.parentNode.querySelectorAll('th').forEach(h => { h.dataset.d = ''; h.classList.remove('on'); h.querySelector('.arr') && (h.querySelector('.arr').textContent = '↕'); });
+  th.dataset.d = d; th.classList.add('on'); th.querySelector('.arr').textContent = d < 0 ? '▼' : '▲';
+  const val = tr => { const t = tr.children[i]?.textContent.replace(/[₪,%+\s]/g, '') || ''; const n = parseFloat(t.replace('−', '-')); return isNaN(n) ? tr.children[i]?.textContent.trim() || '' : n; };
+  [...body.rows].sort((a, b) => { const x = val(a), y = val(b); return (typeof x === 'string' || typeof y === 'string' ? String(x).localeCompare(String(y), 'he') : x - y) * d; }).forEach(r => body.appendChild(r));
+}
+const sh = l => `<th class="${l[1] ? 'n ' : ''}sortable">${l[0]}<span class="arr">↕</span></th>`;
 const TYPE_SHORT = {
   'קרן פנסיה חדשה מקיפה':'פנסיה מקיפה', 'קרן פנסיה חדשה כללית':'פנסיה משלימה (כללית)',
   'קרן השתלמות':'קרן השתלמות', 'קופת גמל לתגמולים ופיצויים':'קופת גמל', 'ביטוח מנהלים':'ביטוח מנהלים',
@@ -41,31 +68,26 @@ function personKpis(P){
 
 function mixCard(P, who){
   const groups = {};
-  for (const f of P.funds) (groups[TYPE_SHORT[f.type] || f.type] ||= 0), groups[TYPE_SHORT[f.type] || f.type] += f.balance;
+  for (const f of P.funds) groups[TYPE_SHORT[f.type] || f.type] = (groups[TYPE_SHORT[f.type] || f.type] || 0) + f.balance;
   const g = Object.entries(groups).sort((a, b) => b[1] - a[1]);
   const bar = (lbl, v) => v == null ? '' : `<div class="pbar"><span>${lbl}</span><div class="pbar-t"><i style="width:${v}%"></i></div><b class="num" dir="ltr">${v}%</b></div>`;
   return `<div class="grid2">
-    <section class="card"><div class="card-h"><h3>לפי סוג מוצר</h3></div>
-      <div class="donut-row pen-donut"><div class="chart" style="height:200px"><canvas id="cPenMix_${who}"></canvas></div>
-      <div class="legend-list">${g.map(([n, v], i) => `<div class="legend-row"><span class="sw" style="background:${pal(i)}"></span><span>${esc(n)}</span><span>${money(v, {short:true})}</span><span></span></div>`).join('')}</div></div></section>
-    <section class="card"><div class="card-h"><h3>חשיפה ותמהיל השקעה</h3><span class="hint">לפי דיווח הגופים</span></div>
-      ${bar('מניות', P.stocks)}${bar('חו״ל', P.abroad)}${bar('מט״ח', P.fx)}${bar('נכסים סחירים', P.traded)}
-      <div class="mix-chips">${(P.mix || []).map(([n, v]) => `<span class="chip">${esc(n.replace(/\s*,\s*/g, ', '))} <b dir="ltr">${v}%</b></span>`).join('')}</div>
-    </section></div>`;
+    ${box('mix', 'לפי סוג מוצר', '', `<div class="donut-row pen-donut"><div class="chart" style="height:200px"><canvas id="cPenMix_${who}"></canvas></div>
+      <div class="legend-list">${g.map(([n, v], i) => `<div class="legend-row"><span class="sw" style="background:${pal(i)}"></span><span>${esc(n)}</span><span>${money(v, {short:true})}</span><span></span></div>`).join('')}</div></div>`)}
+    ${box('exp', 'חשיפה ותמהיל השקעה', 'לפי דיווח הגופים', `${bar('מניות', P.stocks)}${bar('חו״ל', P.abroad)}${bar('מט״ח', P.fx)}${bar('נכסים סחירים', P.traded)}
+      <div class="mix-chips">${(P.mix || []).map(([n, v]) => `<span class="chip">${esc(n.replace(/\s*,\s*/g, ', '))} <b dir="ltr">${v}%</b></span>`).join('')}</div>`)}</div>`;
 }
 
 function returnsTable(f){
   if (!f.tracks?.length) return '';
-  return `<div class="tbl-wrap"><table class="ret-tbl"><thead><tr><th>מסלול</th><th class="n">חודש</th><th class="n">מתחילת השנה</th><th class="n">12 ח׳</th><th class="n">3 שנים</th><th class="n">5 שנים</th><th class="n">ממוצע שנתי 5ש׳</th></tr></thead><tbody>
+  return `<div class="tbl-wrap"><table class="ret-tbl dsort"><thead><tr>${[['מסלול'], ['חודש', 1], ['מתחילת השנה', 1], ['12 ח׳', 1], ['3 שנים', 1], ['5 שנים', 1], ['ממוצע שנתי 5ש׳', 1]].map(sh).join('')}</tr></thead><tbody>
     ${f.tracks.map(t => `<tr><td>${esc(t.name)}${f.tracks.length > 1 ? ` <span class="hint">(${t.share}%)</span>` : ''}</td><td class="n">${fp(t.ret.m)}</td><td class="n">${fp(t.ret.ytd)}</td><td class="n">${fp(t.ret.y1)}</td><td class="n">${fp(t.ret.c3)}</td><td class="n">${fp(t.ret.c5)}</td><td class="n">${fp(t.ret.a5)}</td></tr>`).join('')}
   </tbody></table></div>`;
 }
 
 function pensionCard(f){
   const l = f.last;
-  return `<section class="card fund">
-    <div class="fund-h"><div><h3>${esc(TYPE_SHORT[f.type] || f.type)}</h3><span class="hint">${esc(f.provider)} · פוליסה ${esc(f.policy || '')}</span></div>
-      <span class="chip ${f.status === 'פעיל' ? 'yes' : 'no'}">${esc(f.status)}</span></div>
+  return box('pen-' + (f.policy || f.type), esc(TYPE_SHORT[f.type] || f.type), `${esc(f.provider)} · ${money(f.balance)}`, `
     <div class="fund-kpis">
       <div><span class="lbl">צבירה</span><b>${money(f.balance)}</b></div>
       <div><span class="lbl">קצבה חזויה</span><b>${money(f.pensionNo)}</b><span class="hint">עם הפקדות ${plain(f.pensionWith)}</span></div>
@@ -73,6 +95,7 @@ function pensionCard(f){
       <div><span class="lbl">דמי ניהול בשנה</span><b>${money(feeCost(f))}</b><span class="hint">הערכה</span></div>
     </div>
     <dl class="fund-dl">
+      <div><dt>פוליסה</dt><dd>${esc(f.policy || '—')}</dd></div>
       <div><dt>הצטרפות</dt><dd>${esc(f.join || '—')}</dd></div>
       <div><dt>מעסיק</dt><dd>${esc(f.employer || '—')}</dd></div>
       <div><dt>שכר מבוטח</dt><dd>${f.salary ? plain(f.salary) : '—'}</dd></div>
@@ -81,19 +104,19 @@ function pensionCard(f){
     </dl>
     ${returnsTable(f)}
     ${f.cover?.length ? `<details class="cover"><summary><b>כיסויים ביטוחיים בקרן</b> <span class="hint">נכות ${plain(f.cover[0].pension)} בחודש · עלות ${plain(sum(f.cover.map(c => c.cost || 0)))} בחודש</span></summary>
-      <div class="tbl-wrap"><table><thead><tr><th>כיסוי</th><th class="n">שיעור</th><th class="n">קצבה בחודש</th><th class="n">עלות בחודש</th></tr></thead><tbody>
+      <div class="tbl-wrap"><table class="dsort"><thead><tr>${[['כיסוי'], ['שיעור', 1], ['קצבה בחודש', 1], ['עלות בחודש', 1]].map(sh).join('')}</tr></thead><tbody>
       ${f.cover.map(c => `<tr><td>${esc(c.type)}</td><td class="n">${c.rate}%</td><td class="n">${money(c.pension)}</td><td class="n">${c.cost ? money(c.cost) : '<span class="hint">כלול</span>'}</td></tr>`).join('')}
-      </tbody></table></div></details>` : ''}
-  </section>`;
+      </tbody></table></div></details>` : ''}`, 'fund', `<span class="chip ${f.status === 'פעיל' ? 'yes' : 'no'}">${esc(f.status)}</span>`);
 }
 
 function studyTable(list, title, hint, kind){
   if (!list.length) return '';
   const now = new Date();
-  const rows = list.slice().sort((a, b) => b.balance - a.balance);
+  const rows = sortFunds(list, kind);
   const tot = sum(rows.map(f => f.balance));
-  return `<section class="card"><div class="card-h"><h3>${title}</h3><span class="hint">${hint}</span></div>
-    <div class="tbl-wrap"><table><thead><tr><th>גוף · מסלול</th><th class="n">צבירה</th><th class="n">דמי ניהול</th><th class="n">הפקדה</th>${kind === 'study' ? '<th>נזילה</th>' : ''}<th class="n">מתחילת השנה</th><th class="n">12 ח׳</th><th class="n">ממוצע 5ש׳</th></tr></thead><tbody>
+  const keys = ['provider', 'balance', 'fee', 'deposit', ...(kind === 'study' ? ['liquid'] : []), 'ytd', 'y1', 'a5'];
+  return box(kind, title, hint, `
+    <div class="tbl-wrap"><table><thead><tr>${keys.map(k => sth(kind, k, !['provider', 'liquid'].includes(k))).join('')}</tr></thead><tbody>
     ${rows.map(f => { const t = mainTrack(f) || {ret:{}}, liq = liquidAt(f);
       return `<tr><td><b>${esc(f.provider)}</b> <span class="chip ${f.status === 'פעיל' ? 'yes' : 'no'}">${esc(f.status)}</span>${f.type === 'ביטוח מנהלים' ? ' <span class="chip var">מנהלים</span>' : f.type.includes('גמל') ? ' <span class="chip var">גמל</span>' : ''}<div class="hint" style="font-size:12.5px">${esc(t.name || '')}${f.tracks.length > 1 ? ` +${f.tracks.length - 1}` : ''} · מ־${esc(f.join || '')}</div></td>
       <td class="n"><b>${money(f.balance)}</b></td><td class="n">${fee(f.feeAcc)}${f.feeDep ? `<div class="hint">${fee(f.feeDep)} מהפקדה</div>` : ''}</td>
@@ -102,25 +125,14 @@ function studyTable(list, title, hint, kind){
       <td class="n">${fp(t.ret.ytd)}</td><td class="n">${fp(t.ret.y1)}</td><td class="n">${fp(t.ret.a5)}</td></tr>`; }).join('')}
     <tr class="total"><td>סה״כ (${rows.length})</td><td class="n">${money(tot)}</td><td class="n hint">${(sum(rows.map(f => f.balance * (f.feeAcc || 0))) / tot).toFixed(2)}% ממוצע</td><td class="n">${plain(sum(rows.map(f => f.deposit || 0)))}</td>${kind === 'study' ? `<td>${money(sum(rows.filter(f => (liquidAt(f) || now) <= now).map(f => f.balance)))} נזיל</td>` : ''}<td colspan="3"></td></tr>
     </tbody></table></div>
-    <div class="fund-list">${rows.map(f => { const t = mainTrack(f) || {ret:{}}, liq = liquidAt(f); return `<div class="fl-item">
+    <div class="fund-list"><label class="fl-sort">מיון לפי <select class="inp" data-sortsel="${kind}">${keys.map(k => `<option value="${k}" ${PEN.sort[kind].k === k ? 'selected' : ''}>${SORT_LBL[k]}</option>`).join('')}</select></label>${rows.map(f => { const t = mainTrack(f) || {ret:{}}, liq = liquidAt(f); return `<div class="fl-item">
       <div class="fl-h"><b>${esc(f.provider)}</b><span class="chip ${f.status === 'פעיל' ? 'yes' : 'no'}">${esc(f.status)}</span><b class="fl-bal">${money(f.balance)}</b></div>
       <div class="hint">${esc(t.name || '')} · מ־${esc(f.join || '')}</div>
       <div class="fl-meta">דמי ניהול ${fee(f.feeAcc)}${f.deposit ? ` · הפקדה ${plain(f.deposit)}` : ''}${kind === 'study' ? ` · ${liq && liq <= now ? 'נזילה ✓' : 'נזילה ב־' + fDate(liq)}` : ''}</div>
       <div class="fl-meta">מתחילת השנה ${fp(t.ret.ytd)} · 12 ח׳ ${fp(t.ret.y1)} · ממוצע 5ש׳ ${fp(t.ret.a5)}</div></div>`; }).join('')}
       <div class="fl-item fl-tot"><b>סה״כ ${rows.length}</b><b>${money(tot)}</b></div></div>
     ${list.some(f => f.riders?.length) ? list.filter(f => f.riders?.some(r => r.cover || r.premium)).map(f => `<details class="cover"><summary><b>כיסויים ב${esc(f.provider)}</b> <span class="hint">אובדן כושר עבודה ${plain(sum(f.riders.map(r => r.cover || 0)))} בחודש · פרמיה ${plain(sum(f.riders.map(r => r.premium || 0)))}</span></summary>
-      <ul class="plain-list">${f.riders.filter(r => r.cover || r.premium).map(r => `<li>${esc(r.name)}: ${r.cover ? 'כיסוי ' + plain(r.cover) + ' · ' : ''}פרמיה ${plain(r.premium || 0)}</li>`).join('')}</ul></details>`).join('') : ''}
-  </section>`;
-}
-
-function trackChartCard(P, who){
-  return `<section class="card"><div class="card-h"><h3>תשואות לפי מסלול</h3><span class="hint">כל מסלול פעם אחת, לפי דיווח משרד האוצר</span></div>
-    <div class="chart" style="height:${Math.max(220, uniqTracks(P).length * 46 + 60)}px"><canvas id="cPenRet_${who}"></canvas></div></section>`;
-}
-function uniqTracks(P){
-  const m = new Map();
-  for (const f of P.funds) for (const t of f.tracks || []) { const k = t.name; const c = m.get(k) || {name:k, ret:t.ret, bal:0}; c.bal += t.balance || 0; m.set(k, c); }
-  return [...m.values()].filter(t => t.bal >= 1000).sort((a, b) => b.bal - a.bal);
+      <ul class="plain-list">${f.riders.filter(r => r.cover || r.premium).map(r => `<li>${esc(r.name)}: ${r.cover ? 'כיסוי ' + plain(r.cover) + ' · ' : ''}פרמיה ${plain(r.premium || 0)}</li>`).join('')}</ul></details>`).join('') : ''}`);
 }
 
 function insights(P){
@@ -134,7 +146,7 @@ function insights(P){
   const soon = study.map(f => ({f, d:liquidAt(f)})).filter(x => x.d && x.d > new Date()).sort((a, b) => a.d - b.d)[0];
   if (soon) out.push(`קרן ההשתלמות הבאה שתהיה נזילה: ${esc(soon.f.provider)} (${plain(soon.f.balance)}) ב־${fDate(soon.d)}.`);
   if (P.coverDisab) out.push(`ביטוח אובדן כושר עבודה מעבר לקרן הפנסיה: ${plain(P.coverDisab)} בחודש.`);
-  return out.length ? `<section class="card note-card"><div class="card-h"><h3>במבט מהיר</h3></div><ul class="plain-list">${out.map(x => `<li>${x}</li>`).join('')}</ul></section>` : '';
+  return out.length ? box('ins', 'במבט מהיר', '', `<ul class="plain-list">${out.map(x => `<li>${x}</li>`).join('')}</ul>`, 'note-card') : '';
 }
 
 VIEWS.pens = () => {
@@ -147,6 +159,7 @@ VIEWS.pens = () => {
   return `
   <div class="pen-top">
     <div class="seg" role="tablist">${ppl.map(p => `<button type="button" role="tab" class="${p.k === PEN.who ? 'on' : ''}" data-who="${p.k}">${esc(p.name)} <span class="hint">${plain(p.P.total)}</span></button>`).join('')}</div>
+    <div class="pen-acts"><button class="btn small ghost" type="button" data-all="open">פתיחת הכל</button><button class="btn small ghost" type="button" data-all="close">סגירת הכל</button></div>
     <div class="pen-src"><span class="hint">דוח ${esc(r.source || '')} · נכון ל־${esc(r.asOf || '')}</span>
       <span class="fam-line"><b>שניכם יחד:</b> ${plain(fam.total)} · קצבה ${plain(fam.no)}–${plain(fam.with)} בחודש · הפקדות ${plain(fam.dep)} בחודש · דמי ניהול ~${plain(fam.fee)} בשנה</span></div>
   </div>
@@ -155,28 +168,32 @@ VIEWS.pens = () => {
   ${mixCard(P, PEN.who)}
   ${pens.length ? `<h2 class="sec-h">קרנות פנסיה</h2><div class="fund-grid">${pens.map(pensionCard).join('')}</div>` : ''}
   ${studyTable(study, 'קרנות השתלמות', 'נזילה = 6 שנים מתאריך ההצטרפות', 'study')}
-  ${studyTable(other, 'קופות גמל וביטוח מנהלים', 'סכומים קטנים יחסית', 'other')}
-  ${trackChartCard(P, PEN.who)}`;
+  ${studyTable(other, 'קופות גמל וביטוח מנהלים', 'סכומים קטנים יחסית', 'other')}`;
 };
 VIEWS.pens.after = () => {
-  $$('[data-who]').forEach(b => b.onclick = () => { PEN.who = b.dataset.who; const y = window.scrollY; render(); window.scrollTo(0, y); });
+  const re = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
+  $$('[data-who]').forEach(b => b.onclick = () => { PEN.who = b.dataset.who; re(); });
+  const tog = id => { if (PEN.closed[id]) delete PEN.closed[id]; else PEN.closed[id] = 1; store.set('pensClosed', PEN.closed); re(); };
+  $$('[data-tog]').forEach(h => { h.onclick = e => { if (!e.target.closest('a,button:not([data-tog]),select,input')) tog(h.dataset.tog); }; h.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tog(h.dataset.tog); } }; });
+  $$('[data-all]').forEach(b => b.onclick = () => { const ids = $$('[data-tog]').map(h => h.dataset.tog); if (b.dataset.all === 'close') ids.forEach(id => PEN.closed[id] = 1); else ids.forEach(id => delete PEN.closed[id]); store.set('pensClosed', PEN.closed); re(); });
+  $$('[data-sort]').forEach(th => th.onclick = () => { const [kind, k] = th.dataset.sort.split(':'), st = PEN.sort[kind]; if (st.k === k) st.d = -st.d; else { st.k = k; st.d = k === 'provider' || k === 'liquid' ? 1 : -1; } re(); });
+  $$('[data-sortsel]').forEach(sel => sel.onchange = () => { const st = PEN.sort[sel.dataset.sortsel]; st.k = sel.value; st.d = sel.value === 'provider' || sel.value === 'liquid' ? 1 : -1; re(); });
+  $$('table.dsort th.sortable').forEach(th => th.onclick = () => domSort(th));
   const P = D().pensionReport?.people?.[PEN.who]; if (!P) return;
   const groups = {}; for (const f of P.funds) groups[TYPE_SHORT[f.type] || f.type] = (groups[TYPE_SHORT[f.type] || f.type] || 0) + f.balance;
   const g = Object.entries(groups).sort((a, b) => b[1] - a[1]);
   chart('cPenMix_' + PEN.who, {type:'doughnut', pctLabels:true, data:{labels:g.map(x => x[0]), datasets:[{data:g.map(x => x[1]), backgroundColor:g.map((_, i) => pal(i)), borderWidth:0}]}});
-  const T = uniqTracks(P);
-  chart('cPenRet_' + PEN.who, {type:'bar', data:{labels:T.map(t => t.name.length > 34 ? t.name.slice(0, 33) + '…' : t.name), datasets:[
-    {label:'מתחילת השנה', data:T.map(t => t.ret.ytd ?? null), backgroundColor:pal(0)},
-    {label:'12 חודשים', data:T.map(t => t.ret.y1 ?? null), backgroundColor:pal(1)},
-    {label:'ממוצע שנתי 5 שנים', data:T.map(t => t.ret.a5 ?? null), backgroundColor:pal(2)},
-  ]}, options:{indexAxis:'y', scales:{x:{reverse:true, ticks:{callback:v => v + '%'}, grid:{color:css('--line')}}, y:{position:'right', grid:{display:false}, ticks:{callback(v){ return this.getLabelForValue(v); }}}},
-    plugins:{tooltip:{callbacks:{label:c => ` ${c.dataset.label}: ${c.parsed.x}%`}}}}});
 };
 
-/* place "פנסיה וקרנות" right before "פרישה מוקדמת" */
+/* place "פנסיה וקרנות" in the menu and set the menu order */
 (function(){
   if (PAGES.some(p => p.id === 'pens')) return;
   let i = PAGES.findIndex(p => p.id === 'retire'); if (i < 0) i = PAGES.findIndex(p => p.id === 'inherit');
   PAGES.splice(i >= 0 ? i : PAGES.length, 0, {id:'pens', t:'פנסיה וקרנות', i:PEN_ICON});
+  // menu order (pens.js loads last, after every page has been added)
+  const ORDER = ['total', 'growth', 'exp', 'inc', 'balance', 'risk', 'pens', 'retire', 'inherit', 'graphs', 'pt', 'contacts'];
+  const rank = p => { const r = ORDER.indexOf(p.id); return r < 0 ? 900 + PAGES.indexOf(p) : r; };
+  const main = PAGES.filter(p => !p.sec).sort((a, b) => rank(a) - rank(b)), rest = PAGES.filter(p => p.sec);
+  PAGES.splice(0, PAGES.length, ...main, ...rest);
   if (S.data) { buildNav(); if (location.hash.slice(1) === 'pens') { S.tab = 'pens'; render(); } }
 })();

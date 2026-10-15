@@ -104,6 +104,19 @@ details.cover summary{cursor:pointer}
 .pbar-t i{display:block;height:100%;background:var(--accent);border-radius:6px}
 .mix-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .mix-chips .chip{background:var(--surface-2);color:var(--ink);font-weight:500}
+.pbox-h{cursor:pointer;user-select:none}
+.pbox-h h3{display:flex;align-items:center;gap:6px}
+.pbox .chev{display:inline-block;font-size:13px;color:var(--muted);transition:transform .15s}
+.pbox.closed .chev{transform:rotate(90deg)}
+.pbox.closed .pbox-b{display:none}
+.pbox.closed .pbox-h{margin-bottom:0}
+.pbox-b{display:grid;gap:12px}
+.pen-acts{display:flex;gap:4px}
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable .arr{font-size:10px;margin-inline-start:4px;color:var(--muted);opacity:.6}
+th.sortable.on .arr{opacity:1;color:var(--accent)}
+.fl-sort{display:flex;gap:8px;align-items:center;font-size:13.5px;margin-bottom:8px}
+.fl-sort select{width:auto;padding:5px 8px}
 /* ---------- login ---------- */
 #login{min-height:100%;display:grid;place-items:center;padding:24px 16px}
 .login-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:28px 24px;box-shadow:var(--shadow);display:grid;gap:14px}
