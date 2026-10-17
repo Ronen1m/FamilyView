@@ -191,7 +191,7 @@ VIEWS.pens.after = () => {
   let i = PAGES.findIndex(p => p.id === 'retire'); if (i < 0) i = PAGES.findIndex(p => p.id === 'inherit');
   PAGES.splice(i >= 0 ? i : PAGES.length, 0, {id:'pens', t:'פנסיה וקרנות', i:PEN_ICON});
   // menu order (pens.js loads last, after every page has been added)
-  const ORDER = ['total', 'growth', 'exp', 'inc', 'balance', 'risk', 'pens', 'retire', 'inherit', 'graphs', 'pt', 'contacts'];
+  const ORDER = ['total', 'growth', 'exp', 'inc', 'balance', 'risk', 'pens', 'forecast', 'retire', 'inherit', 'graphs', 'pt', 'contacts'];
   const rank = p => { const r = ORDER.indexOf(p.id); return r < 0 ? 900 + PAGES.indexOf(p) : r; };
   const main = PAGES.filter(p => !p.sec).sort((a, b) => rank(a) - rank(b)), rest = PAGES.filter(p => p.sec);
   PAGES.splice(0, PAGES.length, ...main, ...rest);

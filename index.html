@@ -117,6 +117,12 @@ th.sortable .arr{font-size:10px;margin-inline-start:4px;color:var(--muted);opaci
 th.sortable.on .arr{opacity:1;color:var(--accent)}
 .fl-sort{display:flex;gap:8px;align-items:center;font-size:13.5px;margin-bottom:8px}
 .fl-sort select{width:auto;padding:5px 8px}
+.fc-q{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px}
+.fc-q-t{font:700 20px var(--f-display)}
+.fc-q .inp.fc-age{width:96px;flex:0 0 auto;text-align:center;font:700 24px var(--f-display);color:var(--accent);padding:6px 10px}
+.fc-params{gap:10px 16px;align-items:flex-end}
+.fc-params .field{font-size:13px}
+.fc-person{display:grid;gap:10px;align-content:start}
 /* ---------- login ---------- */
 #login{min-height:100%;display:grid;place-items:center;padding:24px 16px}
 .login-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:28px 24px;box-shadow:var(--shadow);display:grid;gap:14px}
@@ -392,7 +398,7 @@ td.x-col{width:28px;padding-inline:4px}
 <script src="vendor/xlsx.full.min.js"></script>
 <script>/* load the newest app code every time (GitHub Pages caches files for ~10 minutes); import.js needs app.js first */
 (function(){var v=Date.now();function add(src,next){var s=document.createElement("script");s.src=src+"?v="+v;if(next)s.onload=next;document.body.appendChild(s);}
-add("app.js",function(){add("import.js",function(){add("solar.js",function(){add("retire.js",function(){add("pens.js");});});});});})();
+add("app.js",function(){add("import.js",function(){add("solar.js",function(){add("retire.js",function(){add("forecast.js",function(){add("pens.js");});});});});});})();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});</script>
 </body>
 </html>
