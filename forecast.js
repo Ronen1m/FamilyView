@@ -5,7 +5,7 @@
    Inputs live on the page and are saved in D().settings.forecast. */
 
 const FC_ICON = '<path d="M3 20h18"/><path d="M5 16l4-5 4 3 6-8"/><circle cx="19" cy="6" r="1.6"/>';
-const FC_DEF = {who:'p1', age:60, ret:7, infl:2.5, real:false, reRet:3, mortRate:4, stop1:67, stop2:65, coef:null, assets:{}};
+const FC_DEF = {who:'p1', show:null, age:60, ret:7, infl:2.5, real:false, reRet:3, mortRate:4, stop1:67, stop2:65, coef:null, assets:{}};
 const FC_GROUP_RET = {'תיקי מסחר עצמאי':7, 'קריפטו':7, 'קרנות הון (חול)':7, 'קרנות כספית':4, 'עוש אמריקה':0, 'מטח':0};
 const FC_CAT = {pension:'פנסיה', study:'קרנות השתלמות', gemel:'גמל וביטוח מנהלים', liquid:'השקעות וחסכונות', re:'נדל״ן (נטו)'};
 const FC = {open:{}};
@@ -15,6 +15,7 @@ function FS(){
   const f = s.forecast;
   scenarioLoad('forecast', f);
   for (const [k, v] of Object.entries(FC_DEF)) if (f[k] === undefined) f[k] = typeof v === 'object' && v ? {} : v;
+  if (!Array.isArray(f.show) || !f.show.length) f.show = ['p1', 'p2'];
   if (f.coef == null) f.coef = (typeof RS === 'function' && RS().pen1?.coef) || 200;
   return f;
 }
@@ -81,9 +82,12 @@ function fcLoans(F){
 /* ---------- simulation ---------- */
 function fcRun(F){
   const now = new Date(), y0 = now.getFullYear(), m0 = now.getMonth();
+  // who is shown: one person → only their funds; both → their funds plus everything shared (investments, real estate, loans)
+  const show = F.show, both = show.length > 1;
+  if (!both) F.who = show[0];
   const who = F.who, birth = fcBirth(who), Y = birth + (+F.age || 0);
   const months = Math.max(0, (Y - y0) * 12 + (11 - m0));
-  const ins = fcInstruments(F), loans = fcLoans(F);
+  const ins = fcInstruments(F).filter(i => i.owner ? show.includes(i.owner) : both), loans = both ? fcLoans(F) : [];
   const stopAt = {p1:(fcBirth('p1') + +F.stop1 - y0) * 12 + (11 - m0), p2:(fcBirth('p2') + +F.stop2 - y0) * 12 + (11 - m0)};
   const st = ins.map(i => ({...i, v:i.now, paid:0}));
   const ls = loans.map(l => ({...l, v:l.bal, end:null}));
@@ -104,7 +108,7 @@ function fcRun(F){
     if ((m0 + m) % 12 === 11 || m === months) { const y = new Date(y0, m0 + m, 1).getFullYear(); const last = years[years.length - 1]; const snap = {y, ...fcSnap(st, ls)}; if (last.y === y) years[years.length - 1] = snap; else years.push(snap); }
   }
   const disc = F.real ? Math.pow(1 + F.infl / 100, months / 12) : 1;
-  return {Y, months, birth, st, ls, years, start, disc, ages:{p1:Y - fcBirth('p1'), p2:Y - fcBirth('p2')}};
+  return {Y, months, birth, st, ls, years, start, disc, both, show, ages:{p1:Y - fcBirth('p1'), p2:Y - fcBirth('p2')}};
 }
 function fcSnap(st, ls){
   const c = {}; for (const s of st) c[s.cat] = (c[s.cat] || 0) + s.v;
@@ -116,13 +120,14 @@ function fcSnap(st, ls){
 /* ---------- view ---------- */
 VIEWS.forecast = () => {
   const F = FS(), R = fcRun(F), d = v => v / R.disc, M = v => money(d(v)), P = v => plain(d(v));
-  const ppl = ['p1', 'p2'].filter(k => D().settings.people?.[k]);
+  const ppl = ['p1', 'p2'].filter(k => D().settings.people?.[k]), shown = ppl.filter(k => F.show.includes(k)), both = R.both;
+  const whoLbl = both ? 'שניכם' : fcName(shown[0]);
   const nowY = new Date().getFullYear(), ageNow = nowY - fcBirth(F.who);
   const bad = +F.age <= ageNow;
   const by = cat => R.st.filter(s => s.cat === cat);
   const tot = cat => sum(by(cat).map(s => s.v));
   const fin = R.years[R.years.length - 1];
-  const inp = (k, v, w = 70, extra = '') => `<input class="inp" data-fc="${k}" inputmode="decimal" value="${v}" style="width:${w}px" ${extra}>`;
+  const inp = (k, v) => `<input class="inp" data-fc="${k}" inputmode="decimal" value="${v}">`;
   const person = k => {
     const pen = by('pension').filter(s => s.owner === k), stu = by('study').filter(s => s.owner === k), gem = by('gemel').filter(s => s.owner === k);
     const penBal = sum(pen.map(s => s.v)), age = R.ages[k], stopAge = k === 'p1' ? +F.stop1 : +F.stop2;
@@ -163,42 +168,41 @@ VIEWS.forecast = () => {
   return `
   <section class="card fc-ask">
     <div class="fc-q">
-      <span class="fc-q-t">מה המצב כש</span>
-      <div class="seg">${ppl.map(k => `<button type="button" class="${k === F.who ? 'on' : ''}" data-fcwho="${k}">${esc(fcName(k))}</button>`).join('')}</div>
-      <span class="fc-q-t">בגיל</span><input class="inp big-inp fc-age" data-fc="age" inputmode="numeric" value="${F.age}">
-      <span class="hint">היום ${ageNow} · זו שנת <b>${R.Y}</b>${ppl.filter(k => k !== F.who).map(k => ` · ${esc(fcName(k))} בגיל ${R.ages[k]}`).join('')}</span>
+      ${ppl.map(k => `<label class="fc-chk ${F.show.includes(k) ? 'on' : ''}"><input type="checkbox" data-fcshow="${k}" ${F.show.includes(k) ? 'checked' : ''}> ${esc(fcName(k))}</label>`).join('')}
+      <span class="fc-q-t">בגיל</span><input class="inp fc-age" data-fc="age" inputmode="numeric" value="${F.age}">
+      ${both ? `<span class="hint">של</span><div class="seg seg-sm">${ppl.map(k => `<button type="button" class="${k === F.who ? 'on' : ''}" data-fcwho="${k}">${esc(fcName(k))}</button>`).join('')}</div>` : ''}
+      <span class="hint">→ שנת <b>${R.Y}</b> · היום ${ageNow}${both ? ppl.filter(k => k !== F.who).map(k => ` · ${esc(fcName(k))} בגיל ${R.ages[k]}`).join('') : ''}</span>
     </div>
-    <div class="row fc-params">
-      <label class="field">תשואה בקרנות (בשנה) ${inp('ret', F.ret)} %</label>
-      <label class="field">מקדם המרה לקצבה ${inp('coef', F.coef)}</label>
-      <label class="field">הפקדות עד גיל – ${esc(fcName('p1'))} ${inp('stop1', F.stop1, 56)}</label>
-      <label class="field">${esc(fcName('p2'))} ${inp('stop2', F.stop2, 56)}</label>
-      <label class="field">עליית ערך נדל״ן ${inp('reRet', F.reRet, 56)} %</label>
-      <label class="field">ריבית משכנתא ${inp('mortRate', F.mortRate, 56)} %</label>
-      <label class="field">אינפלציה ${inp('infl', F.infl, 56)} %</label>
-      <label class="row" style="gap:6px;font-weight:600;font-size:13.5px;align-self:end"><input type="checkbox" data-fcchk="real" ${F.real ? 'checked' : ''}> בשקלים של היום</label>
+    <div class="fc-mini">
+      <label>תשואה ${inp('ret', F.ret)}%</label>
+      <label>מקדם ${inp('coef', F.coef)}</label>
+      <label>הפקדות עד ${ppl.map(k => inp(k === 'p1' ? 'stop1' : 'stop2', k === 'p1' ? F.stop1 : F.stop2)).join('/')}</label>
+      ${both ? `<label>נדל״ן ${inp('reRet', F.reRet)}%</label><label>משכנתא ${inp('mortRate', F.mortRate)}%</label>` : ''}
+      <label>אינפלציה ${inp('infl', F.infl)}%</label>
+      <label class="fc-real"><input type="checkbox" data-fcchk="real" ${F.real ? 'checked' : ''}> בשקלים של היום</label>
+      <span class="hint" title="אותה משכורת ואותן הפקדות לקרנות (לפי דוח הפנסיה), אותו חיסכון חודשי, המשכנתאות ממשיכות להשתלם">ⓘ הכל נמשך כמו היום · ${F.real ? 'בשקלים של היום' : 'נומינלי'}</span>
     </div>
-    <p class="hint" style="margin:0">ההנחה: שום דבר לא משתנה – אותה משכורת ואותן הפקדות לקרנות (לפי דוח הפנסיה), אותו חיסכון חודשי, המשכנתאות ממשיכות להשתלם. ${F.real ? `הסכומים מוצגים בשקלים של היום (מנוכה אינפלציה ${F.infl}%).` : 'הסכומים נומינליים (בלי ניכוי אינפלציה).'}</p>
   </section>
   ${bad ? `<section class="card"><p>הגיל צריך להיות גדול מהגיל היום (${ageNow}).</p></section>` : `
   <div class="kpis">
-    <div class="kpi hero"><span class="lbl">שווי נקי ב־${R.Y}</span><span class="val">${M(fin.net)}</span><span class="sub">היום ${plain(R.start.net)}</span></div>
-    <div class="kpi"><span class="lbl">פנסיה (שניכם)</span><span class="val">${M(tot('pension'))}</span><span class="sub">קצבה ${P(tot('pension') / F.coef)} בחודש</span></div>
+    <div class="kpi hero"><span class="lbl">${both ? 'שווי נקי' : 'סך החיסכון של ' + esc(whoLbl)} ב־${R.Y}</span><span class="val">${M(fin.net)}</span><span class="sub">היום ${plain(R.start.net)}</span></div>
+    <div class="kpi"><span class="lbl">פנסיה${both ? ' (שניכם)' : ''}</span><span class="val">${M(tot('pension'))}</span><span class="sub">קצבה ${P(tot('pension') / F.coef)} בחודש</span></div>
     <div class="kpi"><span class="lbl">השתלמות וגמל</span><span class="val">${M(tot('study') + tot('gemel'))}</span><span class="sub">היום ${plain(sum([...by('study'), ...by('gemel')].map(s => s.now)))}</span></div>
-    <div class="kpi"><span class="lbl">השקעות וחסכונות</span><span class="val">${M(tot('liquid'))}</span><span class="sub">ברוקרים, קרנות, קריפטו, פיקדונות</span></div>
-    <div class="kpi"><span class="lbl">נדל״ן נטו</span><span class="val">${M(fin.re)}</span><span class="sub">שווי פחות משכנתאות</span></div>
+    ${both ? `<div class="kpi"><span class="lbl">השקעות וחסכונות</span><span class="val">${M(tot('liquid'))}</span><span class="sub">ברוקרים, קרנות, קריפטו, פיקדונות</span></div>
+    <div class="kpi"><span class="lbl">נדל״ן נטו</span><span class="val">${M(fin.re)}</span><span class="sub">שווי פחות משכנתאות</span></div>` : ''}
   </div>
-  <div class="grid2">${ppl.map(person).join('')}</div>
+  <div class="${shown.length > 1 ? 'grid2' : ''}">${shown.map(person).join('')}</div>
   <section class="card"><div class="card-h"><h3>איך זה נבנה, שנה אחרי שנה</h3><span class="hint">${F.real ? 'בשקלים של היום' : 'נומינלי'}</span></div><div class="chart tall"><canvas id="cFc"></canvas></div></section>
   ${table('pension', {owner:1, fee:1})}
   ${table('study', {owner:1, fee:1})}
   ${table('gemel', {owner:1, fee:1})}
   ${table('liquid', {})}
   ${reTable}
-  <details class="card"><summary><b>הנחות לכל השקעה</b> <span class="hint">תשואה שנתית והפקדה חודשית לכל ברוקר / קרן / חשבון</span></summary>
+  ${both ? '' : `<p class="hint">השקעות משותפות (ברוקרים, קרנות, קריפטו) ונדל״ן מוצגים כששניכם מסומנים.</p>`}
+  ${!both ? '' : `<details class="card"><summary><b>הנחות לכל השקעה</b> <span class="hint">תשואה שנתית והפקדה חודשית לכל ברוקר / קרן / חשבון</span></summary>
     <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>השקעה</th><th class="n">היום</th><th class="n">תשואה בשנה</th><th class="n">הפקדה בחודש</th></tr></thead><tbody>${assumeRows}</tbody></table></div>
     <p class="hint">ברירת המחדל: ״החיסכון החודשי״ מעמוד פרישה מוקדמת נכנס לתיק המסחר הגדול. בקרנות הפנסיה, ההשתלמות והגמל ההפקדות לקוחות מדוח הפנסיה, והתשואה היא ${F.ret}% פחות דמי הניהול של כל קרן.</p>
-  </details>`}`;
+  </details>`}`}`;
 };
 VIEWS.forecast.after = () => {
   const F = FS(), re = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
@@ -206,6 +210,7 @@ VIEWS.forecast.after = () => {
   const num = el => { const t = String(el.value).replace(/[,₪%\s]/g, ''); if (t === '' || t === '-' || isNaN(+t)) return null; return +t; };
   liveInputs('[data-fc]', 'data-fc', el => { const v = num(el); if (v == null) return false; F[el.dataset.fc] = v; keep(); });
   $$('[data-fcchk]').forEach(el => el.onchange = () => { F[el.dataset.fcchk] = el.checked; keep(); re(); });
+  $$('[data-fcshow]').forEach(el => el.onchange = () => { const k = el.dataset.fcshow; const set = new Set(F.show); if (el.checked) set.add(k); else set.delete(k); if (!set.size) { el.checked = true; return toast('צריך לסמן לפחות אחד'); } F.show = ['p1', 'p2'].filter(x => set.has(x)); keep(); re(); });
   $$('[data-fcwho]').forEach(b => b.onclick = () => { F.who = b.dataset.fcwho; keep(); re(); });
   liveInputs('[data-fca]', 'data-fca', el => { const [name, k] = el.dataset.fca.split('|'), a = D().assets.find(a => a.name === name), v = num(el); if (v == null || !a) return false; F.assets[name] = {...assetAssume(a, F), [k]:v}; keep(); });
   $$('[data-fctog]').forEach(h => h.onclick = () => { const c = h.dataset.fctog; FC.open[c] = h.parentNode.classList.contains('closed'); re(); });
@@ -214,7 +219,7 @@ VIEWS.forecast.after = () => {
   const R = fcRun(F);
   const Ys = R.years, y0 = Ys[0].y, disc = y => F.real ? Math.pow(1 + F.infl / 100, y - y0) : 1;
   const ser = (k, i) => ({label:{pension:'פנסיה', study:'השתלמות וגמל', liquid:'השקעות וחסכונות', re:'נדל״ן נטו'}[k], data:Ys.map(x => Math.round(x[k] / disc(x.y))), backgroundColor:pal(i), stack:'s'});
-  chart('cFc', {type:'bar', stacked:true, data:{labels:Ys.map(x => `${x.y} (${x.y - fcBirth(F.who)})`), datasets:[ser('pension', 0), ser('study', 1), ser('liquid', 2), ser('re', 3)]}});
+  chart('cFc', {type:'bar', stacked:true, data:{labels:Ys.map(x => `${x.y} (${x.y - fcBirth(F.who)})`), datasets:R.both ? [ser('pension', 0), ser('study', 1), ser('liquid', 2), ser('re', 3)] : [ser('pension', 0), ser('study', 1)]}});
 };
 
 /* place "תחזיות" after "פנסיה וקרנות" (pens.js sets the final menu order) */
