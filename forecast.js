@@ -13,6 +13,7 @@ const FC = {open:{}};
 function FS(){
   const s = D().settings; s.forecast ||= {};
   const f = s.forecast;
+  scenarioLoad('forecast', f);
   for (const [k, v] of Object.entries(FC_DEF)) if (f[k] === undefined) f[k] = typeof v === 'object' && v ? {} : v;
   if (f.coef == null) f.coef = (typeof RS === 'function' && RS().pen1?.coef) || 200;
   return f;
@@ -86,7 +87,7 @@ function fcRun(F){
   const stopAt = {p1:(fcBirth('p1') + +F.stop1 - y0) * 12 + (11 - m0), p2:(fcBirth('p2') + +F.stop2 - y0) * 12 + (11 - m0)};
   const st = ins.map(i => ({...i, v:i.now, paid:0}));
   const ls = loans.map(l => ({...l, v:l.bal, end:null}));
-  const years = [{y:y0, ...fcSnap(st, ls)}];
+  const start = fcSnap(st, ls), years = [{y:y0, ...start}];
   for (let m = 1; m <= months; m++) {
     for (const s of st) {
       const g = Math.pow(1 + s.ret / 100, 1 / 12) - 1 - s.fee / 1200;
@@ -103,7 +104,7 @@ function fcRun(F){
     if ((m0 + m) % 12 === 11 || m === months) { const y = new Date(y0, m0 + m, 1).getFullYear(); const last = years[years.length - 1]; const snap = {y, ...fcSnap(st, ls)}; if (last.y === y) years[years.length - 1] = snap; else years.push(snap); }
   }
   const disc = F.real ? Math.pow(1 + F.infl / 100, months / 12) : 1;
-  return {Y, months, birth, st, ls, years, disc, ages:{p1:Y - fcBirth('p1'), p2:Y - fcBirth('p2')}};
+  return {Y, months, birth, st, ls, years, start, disc, ages:{p1:Y - fcBirth('p1'), p2:Y - fcBirth('p2')}};
 }
 function fcSnap(st, ls){
   const c = {}; for (const s of st) c[s.cat] = (c[s.cat] || 0) + s.v;
@@ -181,7 +182,7 @@ VIEWS.forecast = () => {
   </section>
   ${bad ? `<section class="card"><p>הגיל צריך להיות גדול מהגיל היום (${ageNow}).</p></section>` : `
   <div class="kpis">
-    <div class="kpi hero"><span class="lbl">שווי נקי ב־${R.Y}</span><span class="val">${M(fin.net)}</span><span class="sub">היום ${plain(R.years[0].net)}</span></div>
+    <div class="kpi hero"><span class="lbl">שווי נקי ב־${R.Y}</span><span class="val">${M(fin.net)}</span><span class="sub">היום ${plain(R.start.net)}</span></div>
     <div class="kpi"><span class="lbl">פנסיה (שניכם)</span><span class="val">${M(tot('pension'))}</span><span class="sub">קצבה ${P(tot('pension') / F.coef)} בחודש</span></div>
     <div class="kpi"><span class="lbl">השתלמות וגמל</span><span class="val">${M(tot('study') + tot('gemel'))}</span><span class="sub">היום ${plain(sum([...by('study'), ...by('gemel')].map(s => s.now)))}</span></div>
     <div class="kpi"><span class="lbl">השקעות וחסכונות</span><span class="val">${M(tot('liquid'))}</span><span class="sub">ברוקרים, קרנות, קריפטו, פיקדונות</span></div>
@@ -201,10 +202,12 @@ VIEWS.forecast = () => {
 };
 VIEWS.forecast.after = () => {
   const F = FS(), re = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
-  $$('[data-fc]').forEach(el => el.onchange = () => { const v = +String(el.value).replace(/[,₪%\s]/g, ''); if (isNaN(v)) return toast('יש להזין מספר'); F[el.dataset.fc] = v; markDirty(); re(); });
-  $$('[data-fcchk]').forEach(el => el.onchange = () => { F[el.dataset.fcchk] = el.checked; markDirty(); re(); });
-  $$('[data-fcwho]').forEach(b => b.onclick = () => { F.who = b.dataset.fcwho; markDirty(); re(); });
-  $$('[data-fca]').forEach(el => el.onchange = () => { const [name, k] = el.dataset.fca.split('|'), a = D().assets.find(a => a.name === name); const v = +String(el.value).replace(/[,₪%\s]/g, ''); if (isNaN(v)) return toast('יש להזין מספר'); F.assets[name] = {...assetAssume(a, F), [k]:v}; markDirty(); re(); });
+  const keep = () => scenarioSave('forecast', F); // stays on this device – no "save" needed
+  const num = el => { const t = String(el.value).replace(/[,₪%\s]/g, ''); if (t === '' || t === '-' || isNaN(+t)) return null; return +t; };
+  liveInputs('[data-fc]', 'data-fc', el => { const v = num(el); if (v == null) return false; F[el.dataset.fc] = v; keep(); });
+  $$('[data-fcchk]').forEach(el => el.onchange = () => { F[el.dataset.fcchk] = el.checked; keep(); re(); });
+  $$('[data-fcwho]').forEach(b => b.onclick = () => { F.who = b.dataset.fcwho; keep(); re(); });
+  liveInputs('[data-fca]', 'data-fca', el => { const [name, k] = el.dataset.fca.split('|'), a = D().assets.find(a => a.name === name), v = num(el); if (v == null || !a) return false; F.assets[name] = {...assetAssume(a, F), [k]:v}; keep(); });
   $$('[data-fctog]').forEach(h => h.onclick = () => { const c = h.dataset.fctog; FC.open[c] = h.parentNode.classList.contains('closed'); re(); });
   const big = $('.fc-age'); if (big) big.onkeydown = e => { if (e.key === 'Enter') big.blur(); };
   const el = $('#cFc'); if (!el) return;

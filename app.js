@@ -284,6 +284,25 @@ function removeRow(arr, idx, label){
   const [row] = arr.splice(idx, 1); markDirty(); rerenderKeep();
   toast(`"${label}" הוסרה`, 0, () => { arr.splice(idx, 0, row); rerenderKeep(); });
 }
+/* what-if pages (תחזיות, פרישה מוקדמת): their inputs are a scenario, not data – kept on this device only,
+   so changing them never asks to save. Typing updates the numbers after a short pause. */
+function scenarioLoad(key, target){
+  const flag = '_sc_' + S.mode + key; if (S[flag]) return; S[flag] = 1;
+  const v = store.get('sc.' + S.mode + '.' + key); if (v && typeof v === 'object') deepMerge(target, v);
+}
+function scenarioSave(key, obj){ store.set('sc.' + S.mode + '.' + key, obj); }
+function liveInputs(sel, attr, apply){
+  $$(sel).forEach(el => {
+    const run = () => { clearTimeout(liveInputs.t); if (apply(el) === false) return; el.dataset.done = el.value;
+      const y = window.scrollY, key = el.getAttribute(attr), pos = el.selectionStart;
+      render(); window.scrollTo(0, y);
+      const again = $$(sel).find(x => x.getAttribute(attr) === key);
+      if (again && document.activeElement !== again && liveInputs.typing) { again.focus(); try { again.setSelectionRange(pos, pos); } catch {} }
+    };
+    el.oninput = () => { liveInputs.typing = true; clearTimeout(liveInputs.t); liveInputs.t = setTimeout(run, 500); };
+    el.onchange = () => { if (!el.isConnected || el.dataset.done === el.value) return; liveInputs.typing = false; run(); }; // a box removed by the re-render also fires "change" – ignore it
+  });
+}
 function rerenderKeep(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
 function markDirty(){ if (S.mode === 'demo' && !canPublishDemo()) { if (!S.demoWarned) { toast('מצב דמו: השינויים זמניים ולא נשמרים'); S.demoWarned = true; } return; } S.dirty = true; $('#savebar').hidden = false; }
 const visiblePages = () => PAGES.filter(p => !(D().settings.hiddenTabs || []).includes(p.id));

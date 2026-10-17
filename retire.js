@@ -62,6 +62,7 @@ function RS(){
   const s = D().settings;
   if (!s.retire) s.retire = {};
   const r = s.retire;
+  scenarioLoad('retire', r);
   for (const [k, v] of Object.entries(RET_DEF)) if (r[k] === undefined) r[k] = typeof v === 'object' && v ? JSON.parse(JSON.stringify(v)) : v;
   if (r.desired == null) r.desired = defaultDesired();
   if (r.savings == null) r.savings = defaultSavings();
@@ -276,12 +277,13 @@ VIEWS.retire.after = () => {
   chart('cRetPort', {type:'line', data:{labels:all.map(x => `${x.y} (${x.age1})`), datasets:[{label:'תיק נזיל', data:all.map(x => Math.round(x.P)), borderColor:pal(0), backgroundColor:pal(0) + '22', fill:true, pointRadius:0, tension:.2}]}});
   chart('cRetMort', {type:'line', data:{labels:all.map(x => `${x.y}`), datasets:[{label:'יתרת משכנתאות', data:all.map(x => Math.round(x.mortBal)), borderColor:pal(4), backgroundColor:pal(4) + '22', fill:true, pointRadius:0, tension:.2}]}});
   const set = (path, v) => { const ks = path.split('.'); const last = ks.pop(); const o = ks.reduce((o, k) => o[k], r); o[last] = v; };
-  $$('[data-ret]').forEach(el => el.onchange = () => { const v = +String(el.value).replace(/[,₪\s]/g, ''); if (isNaN(v)) return toast('יש להזין מספר'); set(el.dataset.ret, v); markDirty(); keepScrollR(); });
-  $$('[data-retchk]').forEach(el => el.onchange = () => { set(el.dataset.retchk, el.checked); markDirty(); keepScrollR(); });
-  $$('[data-retgrp]').forEach(el => el.onchange = () => { const g = el.dataset.retgrp; r.liquidGroups = el.checked ? [...new Set([...r.liquidGroups, g])] : r.liquidGroups.filter(x => x !== g); markDirty(); keepScrollR(); });
+  const keep = () => scenarioSave('retire', r); // a scenario: stays on this device – no "save" needed
+  liveInputs('[data-ret]', 'data-ret', el => { const t = String(el.value).replace(/[,₪\s]/g, ''); if (t === '' || t === '-' || isNaN(+t)) return false; set(el.dataset.ret, +t); keep(); });
+  $$('[data-retchk]').forEach(el => el.onchange = () => { set(el.dataset.retchk, el.checked); keep(); keepScrollR(); });
+  $$('[data-retgrp]').forEach(el => el.onchange = () => { const g = el.dataset.retgrp; r.liquidGroups = el.checked ? [...new Set([...r.liquidGroups, g])] : r.liquidGroups.filter(x => x !== g); keep(); keepScrollR(); });
   $$('[data-info]').forEach(b => b.onclick = () => { RET_INFO.open = RET_INFO.open === b.dataset.info ? null : b.dataset.info; keepScrollR(); });
   const ic = $('#infoClose'); if (ic) ic.onclick = () => { RET_INFO.open = null; keepScrollR(); };
-  const pl = $('#retPlan'); if (pl) pl.onchange = () => { r.planYear = pl.value ? +pl.value : null; keepScrollR(); };
+  const pl = $('#retPlan'); if (pl) pl.onchange = () => { r.planYear = pl.value ? +pl.value : null; keep(); keepScrollR(); };
 };
 function keepScrollR(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
 
