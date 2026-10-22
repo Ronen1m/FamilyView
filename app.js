@@ -82,11 +82,35 @@ async function ghRequest(method, body, path){
 }
 // the last encrypted copy that was opened/saved on this device (still encrypted – safe to keep), used when offline
 const keepLocal = p => store.set('encCopy', {at:Date.now(), p});
+/* Saving to GitHub needs the file's current version id (sha). Right after a save GitHub may still report the old id
+   for about a minute, which made a quick second save fail with 409. So: remember the id every save returns and use it;
+   on a conflict, re-read and retry; ask before overwriting only when the file was really saved from another device. */
+const shaSeen = new Set();
+const ghPath = p => p || ghCfg()?.path || 'data/data.enc.json';
+function noteSha(path, sha){ if (!sha) return; (S.sha ||= {})[ghPath(path)] = sha; shaSeen.add(sha); }
+async function ghPut(path, message, content){
+  const g = ghCfg(), p = ghPath(path);
+  let sha = S.sha?.[p];
+  if (!sha) { try { sha = (await ghRequest('GET', null, p)).sha; } catch {} }
+  for (let k = 0; ; k++) {
+    try { const r = await ghRequest('PUT', {message, content, branch:g.branch || 'main', sha}, p); noteSha(p, r.content?.sha); return; }
+    catch (e) {
+      if (!/409|422/.test(e.message) || k >= 4) throw e;
+      await new Promise(res => setTimeout(res, 1200 * (k + 1)));
+      let cur; try { cur = (await ghRequest('GET', null, p)).sha; } catch {}
+      if (cur && !shaSeen.has(cur)) { // a version this device never saw → saved from another device
+        if (!confirm('הנתונים נשמרו בינתיים ממכשיר אחר.\nלשמור את הגרסה שלך במקומם?\n(ביטול – כדי לרענן ולקבל את הגרסה העדכנית)')) throw new Error('השמירה בוטלה. רעננו את הדף כדי לקבל את הנתונים העדכניים');
+        shaSeen.add(cur);
+      }
+      sha = cur || sha;
+    }
+  }
+}
 async function loadEncrypted(){
   const g = ghCfg(), local = store.get('encCopy');
   if (navigator.onLine === false && local) { S.offline = true; return local.p; }
   if (g && g.token) {
-    try { const f = await ghRequest('GET'); const p = JSON.parse(atob(f.content.replace(/\s/g, ''))); keepLocal(p); return p; } catch (e) { console.warn('GitHub load failed, using site copy', e); }
+    try { const f = await ghRequest('GET'); noteSha(null, f.sha); const p = JSON.parse(atob(f.content.replace(/\s/g, ''))); keepLocal(p); return p; } catch (e) { console.warn('GitHub load failed, using site copy', e); }
   }
   try {
     const r = await fetch('data/data.enc.json', {cache:'no-store'});
@@ -870,23 +894,21 @@ async function save(){
     D().meta.updated = today();
     if (S.mode === 'demo') { // publish the demo for everyone (plain JSON – it only holds made-up data)
       const g = ghCfg(), path = demoPath(g);
-      let sha; try { sha = (await ghRequest('GET', null, path)).sha; } catch {}
-      await ghRequest('PUT', {message:`עדכון נתוני דמו ${today()}`, content:b64e(new TextEncoder().encode(JSON.stringify(D()))), branch:g.branch || 'main', sha}, path);
+      await ghPut(path, `עדכון נתוני דמו ${today()}`, b64e(new TextEncoder().encode(JSON.stringify(D()))));
       toast('הדמו עודכן לכולם ✓ (יופיע באתר תוך דקה־שתיים)', 4000);
       S.dirty = false; $('#savebar').hidden = true; render(); btn.disabled = false; btn.textContent = 'שמירה'; return;
     }
     const payload = await encryptPayload(D(), S.password);
     const g = ghCfg();
     if (g && g.token) {
-      let sha; try { sha = (await ghRequest('GET')).sha; } catch {}
-      await ghRequest('PUT', {message:`עדכון נתונים ${today()}`, content:btoa(JSON.stringify(payload)), branch:g.branch || 'main', sha});
+      await ghPut(null, `עדכון נתונים ${today()}`, btoa(JSON.stringify(payload)));
       keepLocal(payload);
       toast('נשמר ב־GitHub ✓');
     } else {
       download(JSON.stringify(payload), 'data.enc.json');
     }
     S.dirty = false; $('#savebar').hidden = true; render();
-  } catch (e) { toast(navigator.onLine === false || /חיבור/.test(e.message) ? 'אין חיבור לאינטרנט – השינויים נשארים פתוחים. שמרו שוב כשהחיבור יחזור.' : 'השמירה נכשלה: ' + e.message + '. בדקו את פרטי GitHub בהגדרות.', 5000); }
+  } catch (e) { toast(navigator.onLine === false || /חיבור/.test(e.message) ? 'אין חיבור לאינטרנט – השינויים נשארים פתוחים. שמרו שוב כשהחיבור יחזור.' : (/בוטלה/.test(e.message) ? e.message : 'השמירה נכשלה: ' + e.message + (/40[13]/.test(e.message) ? '. בדקו את פרטי GitHub בהגדרות.' : '. נסו שוב בעוד רגע.')), 5000); }
   btn.disabled = false; btn.textContent = 'שמירה';
 }
 
@@ -903,7 +925,7 @@ async function doLogin(user, pw){
   if (user.trim().toLowerCase() === 'demo') {
     if (pw !== 'demo') { err.textContent = 'סיסמת הדמו היא demo'; return; }
     if (canPublishDemo()) { // owner's device: read the latest demo straight from GitHub
-      try { const f = await ghRequest('GET', null, demoPath(ghCfg())); return enter('demo', JSON.parse(new TextDecoder().decode(b64d(f.content))), null); } catch (e) { console.warn(e); }
+      try { const f = await ghRequest('GET', null, demoPath(ghCfg())); noteSha(demoPath(ghCfg()), f.sha); return enter('demo', JSON.parse(new TextDecoder().decode(b64d(f.content))), null); } catch (e) { console.warn(e); }
     }
     const r = await fetch('data/demo.json', {cache:'no-store'}); return enter('demo', await r.json(), null);
   }
