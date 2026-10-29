@@ -259,7 +259,14 @@ function commitTx(){
 function undoImport(id){
   const ip = impData(), i = ip.log.findIndex(l => l.id === id); if (i < 0) return;
   const l = ip.log[i];
-  if (l.kind === 'pen') { for (const x of l.changes) { const a = D().assets.find(a => a.name === x.name); if (a) Object.assign(a, x.prev); } }
+  if (l.kind === 'pen') {
+    for (const x of l.changes) {
+      if (x.liab) { const b = D().liabilities.find(b => b.name === x.liab); if (b) Object.assign(b, x.prev); continue; }
+      if (x.snap) { const h = D().netWorthHistory, i = h.findIndex(r => r.date === x.snap); if (i >= 0) { if (x.prev) h[i] = x.prev; else h.splice(i, 1); } continue; }
+      if (x.report) { const r = D().pensionReport ||= {people:{}}; r.people ||= {}; if (x.prev) r.people[x.report] = x.prev; else delete r.people[x.report]; if (x.meta) Object.assign(r, x.meta); continue; }
+      const a = D().assets.find(a => a.name === x.name); if (a) Object.assign(a, x.prev);
+    }
+  }
   else for (const x of l.deltas || []) applyDelta(x, -1);
   ip.pending = ip.pending.filter(q => q.imp !== l.id); // its open questions go too
   ip.log.splice(i, 1); markDirty(); toast('הקליטה בוטלה'); render();
@@ -622,8 +629,171 @@ function matchAsset(name){
   for (const {a, i} of penAssets()) { const n = normDesc(a.name); const s = toks.filter(t => n.includes(t) || n.includes(t.replace(/ה$/, 'יה'))).length; if (s > score) { score = s; best = i; } }
   return score ? best : -1;
 }
-async function onPenFile(file){
-  IMP.kind = 'pen'; IMP.file = file.name; IMP.penRows = []; IMP.msg = '';
+/* ---------- pension agent report (PDF, e.g. "דוח שוטף" by גל ברם) → structured data ----------
+   pdf.js gives each line right-to-left; amounts come as "1,232,366" with a separate "₪" token. */
+const pN = t => { const v = parseFloat(String(t ?? '').replace(/[₪,%\s]/g, '')); return isNaN(v) ? null : v; };
+const isNumT = t => /^-?[\d,]+(\.\d+)?%?$/.test(String(t).trim());
+function parsePenReport(lines){
+  const L = lines.map(l => l.filter(t => t.trim() && t.trim() !== '₪' && t !== '|').map(t => t.replace(/^₪\s*/, '').trim()));
+  const flat = L.map(l => l.join(' | '));
+  const find = (rx, from = 0) => { for (let i = from; i < L.length; i++) if (L[i].some(t => rx.test(t))) return i; return -1; };
+  const after = (lbl, from = 0) => { for (let i = from; i < L.length; i++) { const j = L[i].indexOf(lbl); if (j >= 0) return L[i][j + 1]; } return null; };
+  const P = {funds:[]};
+  const hi = find(/^עבור הלקוח$/);
+  if (hi < 0 || !L[hi + 1]) return null;
+  const head = L[hi + 1]; // [asOf, "name id", agent]
+  P.asOf = head.find(t => /^\d\d\/\d\d\/\d{4}$/.test(t)) || '';
+  P.client = (head.find(t => /[֐-׿]/.test(t) && /\d{6,}/.test(t)) || head[1] || '').replace(/\d+/g, '').trim();
+  P.agent = head[head.length - 1] || '';
+  P.produced = after('הופק בתאריך') || '';
+  P.total = pN(after('סך החיסכון שצברת'));
+  P.ytd = pN(after('תשואה מתחילת שנה'));
+  for (const [k, lbl] of [['stocks', 'חשיפה למניות'], ['abroad', 'חשיפה לחו"ל'], ['fx', 'חשיפה למט"ח'], ['traded', 'נכסים סחירים']]) { for (const l of L) { const j = l.indexOf(lbl); if (j >= 0 && isNumT(l[j + 1] || '')) { P[k] = pN(l[j + 1]); break; } } }
+  const mi = find(/^תמהיל השקעה$/); P.mix = [];
+  if (mi >= 0) for (const l of L.slice(mi + 1, mi + 7)) for (let j = 0; j + 1 < l.length; j += 2) if (!isNumT(l[j]) && /%$/.test(l[j + 1]) && pN(l[j + 1])) P.mix.push([l[j], pN(l[j + 1])]);
+  P.mix.sort((a, b) => b[1] - a[1]);
+  const si = find(/^סך הוני מהחיסכון$/);
+  if (si >= 0) { const v = L[si + 1].map(pN); [P.lumpSum, P.depositsMonthly, P.pensionNo] = v; }
+  const pw = L.find(l => l[0] === 'פנסיה' && l.length === 3 && isNumT(l[1]) && isNumT(l[2])); if (pw) P.pensionWith = pN(pw[2]);
+  const li = find(/^תאריך התחלה$/);
+  if (li >= 0 && L[li + 1] && /^\d\d\/\d\d\/\d{4}$/.test(L[li + 1][0])) { const t = L[li + 1]; P.loan = {start:t[0], amount:pN(t[1]), product:t[2], rate:pN(t[3]), monthly:pN(t[4]), balance:pN(t[5]), end:t[6]}; }
+  const ci = find(/^כיסויים לאובדן כושר עבודה$/);
+  if (ci >= 0 && L[ci + 1]) { const t = L[ci + 1]; P.coverDisab = pN(t[0]); P.coverDeath = pN(t[t.length - 1]); }
+  // one section per product: ["1","קרן פנסיה חדשה מקיפה"]
+  const TYPES = /^(קרן פנסיה חדשה מקיפה|קרן פנסיה חדשה כללית|קרן השתלמות|קופת גמל לתגמולים ופיצויים|ביטוח מנהלים|קופת גמל להשקעה|קרן פנסיה ותיקה)$/;
+  const starts = []; L.forEach((l, i) => { if (l.length === 2 && /^\d+$/.test(l[0]) && TYPES.test(l[1])) starts.push(i); });
+  starts.forEach((s, n) => {
+    const e = n + 1 < starts.length ? starts[n + 1] : L.length, F = {type:L[s][1]};
+    for (let k = s - 1; k >= Math.max(0, s - 4); k--) {
+      const j = L[k].indexOf('צבירה'); if (j >= 0) { F.balance = pN(L[k][j + 1]); if (L[k].includes('קצבה חזויה') && L[k + 1]) { F.pensionNo = pN(L[k + 1][0]); F.pensionWith = pN(L[k + 1][1]); } break; }
+    }
+    const B = L.slice(s + 1, e);
+    const jl = B.findIndex(l => l.includes('הצטרפות'));
+    if (jl >= 0) { const l = B[jl]; F.join = l[l.indexOf('הצטרפות') + 1]; F.provider = l.filter(t => t !== 'הצטרפות' && t !== F.join)[0] || (B[jl - 1] || [])[0]; }
+    if (!F.provider) F.provider = (B[0] || [])[0];
+    const pl = B.find(l => l[0] === 'מספר פוליסה'); if (pl) { F.policy = pl[1]; F.status = pl.includes('לא פעיל') ? 'לא פעיל' : 'פעיל'; }
+    const hk = B.findIndex(l => l.includes('מיופה כוח'));
+    F.deposit = 0; F.salary = 0;
+    if (hk >= 0 && B[hk + 1]) {
+      const h = B[hk], v = B[hk + 1], d = {};
+      if (h.length === v.length) h.forEach((x, i) => d[x] = v[i]);
+      else { const pc = v.filter(t => /%$/.test(t)), nums = v.filter(t => isNumT(t) && !/%$/.test(t)); // fall back: by kind of value
+        if (h.includes('דמי ניהול מהפקדה')) { d['דמי ניהול מהפקדה'] = pc[0]; d['דמי ניהול מצבירה'] = pc[1]; } else d['דמי ניהול מצבירה'] = pc[0];
+        if (h.includes('שכר למוצר')) d['שכר למוצר'] = nums[0]; if (h.includes('הפקדה שוטפת')) d['הפקדה שוטפת'] = nums[h.includes('שכר למוצר') ? 1 : 0]; }
+      F.feeDep = pN(d['דמי ניהול מהפקדה']); F.feeAcc = pN(d['דמי ניהול מצבירה']);
+      F.deposit = pN(d['הפקדה שוטפת']) || 0; F.salary = pN(d['שכר למוצר']) || 0;
+      F.employer = d['מעסיק'] && !/שכיר כללי/.test(d['מעסיק']) ? d['מעסיק'] : '—';
+      if (d['מקדם מובטח לפרישה']) F.coef = pN(d['מקדם מובטח לפרישה']);
+    }
+    // returns: [name, balance, share, month, ytd, 12m, 3y, 5y, avg3, avg5]
+    F.tracks = [];
+    const rk = B.findIndex(l => l[0] === 'אחרון');
+    if (rk >= 0) for (let k = rk + 1; k < B.length; k++) {
+      const l = B[k];
+      if (/^(סוג כיסוי|מבוטח ראשי|מעסיק|סכום הלוואה|לא התקבל מידע)$/.test(l[0]) || /^פיצויים/.test(l[0])) break;
+      if (l.length >= 4 && /%$/.test(l[2] || '') && isNumT(l[1])) {
+        let name = l[0]; const nx = B[k + 1];
+        if (nx && nx.length === 1 && !/%|\d{3}/.test(nx[0].replace(/S&P\s*\d+|\d+\s*S&P/, ''))) name += ' ' + nx[0];
+        name = name.replace(/\s+/g, ' ').replace(/^[-\s\d]+(?=\D)/, '')
+          .replace(/P 500 S|500 S&P|S&P\s*500|S&P(?! ?500)/g, 'S&P 500').replace(/S&P 500 מדד/, 'מדד S&P 500').replace(/מדד 500 S&P 500/, 'מדד S&P 500').replace(/מדד S&P 500 S&P 500/, 'מדד S&P 500').trim();
+        const vals = l.slice(3).map(pN), keys = ['m', 'ytd', 'y1', 'c3', 'c5', 'a3', 'a5'], R = {};
+        vals.forEach((v, i) => { if (keys[i]) R[keys[i]] = v; });
+        if (pN(l[2])) F.tracks.push({name, share:pN(l[2]), balance:pN(l[1]), ret:R});
+      }
+    }
+    const ck = B.findIndex(l => l[0] === 'סוג כיסוי' && l[1] === 'שיעור כיסוי');
+    if (ck >= 0) { F.cover = []; for (const l of B.slice(ck + 1)) { if (!/%$/.test(l[1] || '')) break; F.cover.push({type:l[0], rate:pN(l[1]), pension:pN(l[2]), cost:l[3] != null ? pN(l[3]) : null}); } }
+    const rid = B.filter(l => l[1] === 'אבדן כושר עבודה').map(l => { const nums = l.slice(2).map(pN); return {name:l[0], cover:nums[0] || 0, premium:nums[1] || 0}; });
+    if (rid.length) F.riders = rid;
+    const dk = B.findIndex(l => l[0] === 'מעסיק' && l.includes('חודש שכר'));
+    if (dk >= 0 && B[dk + 1] && !B[dk + 1].some(t => /ניוד/.test(t))) {
+      const h = B[dk], v = B[dk + 1];
+      if (v.length <= h.length && /\d\d\/\d{4}/.test(v.join(' '))) { const d = {}, hh = h.slice(h.length - v.length); hh.forEach((x, i) => d[x] = v[i]); // no employer column → align from the end
+        const [mm, yy] = String(d['חודש שכר'] || '').split('/'), [ad, am, ay] = P.asOf.split('/');
+        if (yy && (+ay * 12 + +am) - (+yy * 12 + +mm) <= 6) F.last = {month:d['חודש שכר'], salary:pN(d['שכר מדווח']), employee:pN(d['הפקדת עובד']), employer:pN(d['הפקדת מעסיק']), severance:pN(d['הפקדת פיצויים']), total:pN(d['סה״כ הפקדה'])};
+      }
+    }
+    P.funds.push(F);
+  });
+  return P.funds.length || P.total ? P : null;
+}
+function penPersonOf(P){
+  const ppl = D().settings.people || {};
+  for (const [k, n] of Object.entries(ppl)) if (n && P.client.split(/[\s\-]+/).includes(n)) return k;
+  for (const [k, n] of Object.entries(ppl)) if (n && P.client.includes(n)) return k;
+  return null;
+}
+const shortDate = s => { const m = String(s || '').match(/(\d\d)\/(\d\d)\/\d\d(\d\d)/); return m ? `${m[1]}.${m[2]}.${m[3]}` : nowStamp(); };
+// what a report changes in "מבט כולל": pension (מקיפה + כללית) and its expected pension, study funds total, pension loan
+function penPlan(k, P){
+  const name = (D().settings.people || {})[k], out = [];
+  const pen = P.funds.filter(f => /קרן פנסיה חדשה/.test(f.type)), study = P.funds.filter(f => f.type === 'קרן השתלמות');
+  const aP = D().assets.find(a => /פנסי/.test(a.group || '') && a.name.includes(name));
+  const aS = D().assets.find(a => /השתלמות/.test(a.group || '') && a.name.includes(name));
+  if (aP && pen.length) out.push({asset:aP, value:Math.round(sum(pen.map(f => f.balance || 0))), pension:Math.round(sum(pen.map(f => f.pensionNo || 0))) || null});
+  if (aS && study.length) out.push({asset:aS, value:Math.round(sum(study.map(f => f.balance || 0)))});
+  if (P.loan) { const l = D().liabilities.find(l => /פנסיה/.test(l.name)); if (l) out.push({liab:l, value:Math.round(P.loan.balance)}); }
+  return out;
+}
+async function onPenFiles(files){
+  IMP.kind = 'pen'; IMP.file = files.map(f => f.name).join(', '); IMP.penRows = []; IMP.msg = ''; IMP.penReports = [];
+  if (IMP.pdfUrl) URL.revokeObjectURL(IMP.pdfUrl); IMP.pdfUrl = null;
+  const pdfs = files.filter(f => /\.pdf$/i.test(f.name)), other = files.filter(f => !/\.pdf$/i.test(f.name));
+  IMP.msg = pdfs.length ? `קורא ${pdfs.length} דוחות…` : ''; render();
+  const bad = [];
+  for (const f of pdfs) {
+    try {
+      const P = parsePenReport(await pdfLines(f));
+      const k = P && penPersonOf(P);
+      if (!P || !k) { bad.push(f); continue; }
+      IMP.penReports = IMP.penReports.filter(r => r.k !== k).concat({k, P, file:f.name, plan:penPlan(k, P)});
+    } catch (e) { console.error(e); bad.push(f); }
+  }
+  IMP.msg = bad.length ? `לא זיהיתי דוח מוכר ב־${bad.map(f => f.name).join(', ')}. אפשר להקליד את היתרות בטבלה למטה.` : '';
+  if (bad.length === 1 && !IMP.penReports.length) IMP.pdfUrl = URL.createObjectURL(bad[0]);
+  if (other.length) return onPenFile(other[0], true);
+  render();
+}
+function applyPenReports(){
+  const changes = [], d = D(), r = d.pensionReport ||= {people:{}};
+  r.people ||= {};
+  const meta = {asOf:r.asOf, produced:r.produced, source:r.source};
+  for (const {k, P, plan} of IMP.penReports) {
+    for (const x of plan) {
+      if (x.liab) { changes.push({liab:x.liab.name, prev:{value:x.liab.value}}); x.liab.value = x.value; continue; }
+      const a = x.asset; changes.push({name:a.name, prev:{value:a.value, foreign:a.foreign, updated:a.updated, pension:a.pension}});
+      a.value = x.value; if (x.pension) a.pension = x.pension; a.updated = shortDate(P.asOf);
+    }
+    changes.push({report:k, prev:r.people[k] ? JSON.parse(JSON.stringify(r.people[k])) : null, meta});
+    const {client, agent, ...keep} = P; r.people[k] = keep;
+    r.asOf = P.asOf; r.produced = P.produced; r.source = `${agent || 'הסוכן'}`;
+  }
+  if ($('#penSnap')?.checked !== false) {
+    const t = totals(), h = d.netWorthHistory, e = h.find(x => x.date === today());
+    const row = {date:today(), assets:Math.round(t.assets), liabilities:Math.round(t.liabilities), net:Math.round(t.net)};
+    changes.push({snap:today(), prev:e ? {...e} : null});
+    if (e) Object.assign(e, row); else h.push(row);
+  }
+  impData().log.unshift({id:Date.now(), kind:'pen', file:IMP.penReports.map(x => `דוח ${x.P.agent || ''} ${x.P.asOf} – ${(d.settings.people || {})[x.k]}`).join(' · '), date:today(), n:changes.filter(c => !c.report && !c.snap).length, changes});
+  markDirty(); toast(`עודכנו ${IMP.penReports.length} דוחות: מבט כולל ופנסיה וקרנות. לחצו "שמירה" כדי לשמור.`, 4500);
+  IMP.penReports = []; IMP.file = null; IMP.msg = ''; render();
+}
+function penReportsHtml(){
+  if (!IMP.penReports?.length) return '';
+  const nm = k => esc((D().settings.people || {})[k] || k);
+  return `<section class="card ask"><div class="card-h"><h3>זוהו ${IMP.penReports.length} דוחות</h3><span class="hint">בדקו ולחצו ״עדכון״ – אפשר לבטל אחר כך</span></div>
+    ${IMP.penReports.map(({k, P, file, plan}) => `<div class="q">
+      <div class="q-h"><b>${nm(k)}</b><span class="hint">${esc(file)} · דוח ${esc(P.agent || '')} נכון ל־${esc(P.asOf)} · ${P.funds.length} מוצרים · סך החיסכון ${plain(P.total || 0)}</span></div>
+      <div class="tbl-wrap"><table><thead><tr><th>מה מתעדכן</th><th class="n">היום</th><th class="n">לפי הדוח</th><th class="n">שינוי</th></tr></thead><tbody>
+      ${plan.map(x => { const cur = x.liab ? liabValue(x.liab) : assetValue(x.asset), lbl = x.liab ? x.liab.name : x.asset.name; return `<tr><td>${esc(lbl)}${x.pension ? `<div class="hint" style="font-size:12px">קצבה חזויה ${plain(x.asset.pension || 0)} → ${plain(x.pension)}</div>` : ''}</td><td class="n">${money(cur)}</td><td class="n"><b>${money(x.value)}</b></td><td class="n ${x.value - cur >= 0 ? 'up' : 'down'}">${x.value - cur >= 0 ? '+' : '−'}${plain(Math.abs(x.value - cur))}</td></tr>`; }).join('')}
+      <tr><td>עמוד ״פנסיה וקרנות״</td><td colspan="3" class="hint">כל ${P.funds.length} המוצרים: דמי ניהול, תשואות, הפקדות, כיסויים</td></tr>
+      </tbody></table></div></div>`).join('')}
+    <div class="row"><button class="btn primary" id="penApply" type="button">עדכון</button>
+      <label class="row" style="gap:6px;font-weight:600;font-size:13.5px"><input type="checkbox" id="penSnap" checked> לשמור גם תמונת מצב לגרף הצמיחה</label></div>
+  </section>`;
+}
+async function onPenFile(file, keep){
+  IMP.kind = 'pen'; if (!keep) { IMP.file = file.name; IMP.msg = ''; } IMP.penRows = [];
   if (IMP.pdfUrl) URL.revokeObjectURL(IMP.pdfUrl); IMP.pdfUrl = null;
   if (/\.pdf$/i.test(file.name)) { IMP.pdfUrl = URL.createObjectURL(file); IMP.msg = 'דוח PDF: פתחו אותו בחלון נפרד והקלידו את היתרות בטבלה למטה.'; return render(); }
   try {
@@ -675,14 +845,15 @@ VIEWS.upPen = () => {
   const after = sum(list.map(({a, i}) => { const st = IMP.pen[i]; if (!st || st.v == null) return assetValue(a); return isForeign(a) ? st.v * (a.fx || D().rates[a.currency.toLowerCase()] || 1) : st.v; }));
   const opts = sel => `<option value="-1">— לא לשייך —</option>` + list.map(({a, i}) => `<option value="${i}" ${sel === i ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
   return `
-  <section class="card"><div class="card-h"><h3>העלאת דוח פנסיה וקרנות</h3><span class="hint">xlsx · csv · pdf</span></div>
-    <label class="btn primary" style="justify-self:start"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>בחירת קובץ<input type="file" id="penFile" accept=".xlsx,.xls,.csv,.pdf" hidden></label>
+  <section class="card"><div class="card-h"><h3>העלאת דוח פנסיה וקרנות</h3><span class="hint">PDF של הסוכן · xlsx · csv</span></div>
+    <label class="btn primary" style="justify-self:start"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>בחירת קבצים (אפשר כמה יחד)<input type="file" id="penFile" accept=".xlsx,.xls,.csv,.pdf" multiple hidden></label>
     ${IMP.kind === 'pen' && IMP.file ? `<p style="margin:0">קובץ: <b>${esc(IMP.file)}</b>${IMP.pdfUrl ? ` · <a href="${IMP.pdfUrl}" target="_blank" rel="noopener">פתיחת הדוח בחלון נפרד</a>` : ''}</p>` : ''}
     ${IMP.kind === 'pen' && IMP.msg ? `<p class="note" style="margin:0">${esc(IMP.msg)}</p>` : ''}
     <details class="note"><summary><b>מאיפה מורידים?</b></summary>
       <p><b>ריכוז כל הקופות:</b> דוח מהמסלקה הפנסיונית, דרך הסוכן הפנסיוני או באתר ״הר הכסף״ של משרד האוצר. <b>קופה בודדת:</b> הדוח הרבעוני או השנתי המקוצר מהאזור האישי בחברה המנהלת. <b>תיק השקעות או קרן כספית:</b> דוח יתרות מהבנק או מבית ההשקעות.</p>
-      <p>מקובץ אקסל היתרות נקלטות ומשויכות לנכסים אוטומטית. מקובץ PDF מקלידים את היתרות בטבלה. העדכון משנה את שווי הנכסים במבט הכולל.</p></details>
+      <p><b>הדוח השוטף של הסוכן (PDF):</b> נקרא אוטומטית – לכל אחד מכם בנפרד, ואפשר לבחור את שני הדוחות יחד. מתעדכנים במבט הכולל הפנסיה (מקיפה + כללית) והקצבה החזויה, קרנות ההשתלמות וההלוואה מהפנסיה, ובעמוד ״פנסיה וקרנות״ כל המוצרים. מקובץ אקסל היתרות משויכות לנכסים אוטומטית.</p></details>
   </section>
+  ${penReportsHtml()}
   ${IMP.penRows.length ? `<section class="card"><div class="card-h"><h3>שורות שזוהו בקובץ</h3><span class="hint">בדקו שכל קופה משויכת לנכס הנכון</span></div>
     <div class="tbl-wrap"><table><thead><tr><th>שם בקובץ</th><th class="n">יתרה</th><th class="n">קצבה</th><th>שיוך לנכס</th></tr></thead><tbody>
     ${IMP.penRows.map((r, k) => `<tr><td>${esc(r.name)}</td><td class="n">${money(r.v)}</td><td class="n">${r.pension ? money(r.pension) : ''}</td><td><select class="inp" style="padding:5px 8px" data-penmap="${k}">${opts(r.to)}</select></td></tr>`).join('')}
@@ -705,7 +876,8 @@ VIEWS.upPen = () => {
   ${logHtml(['pen'])}`;
 };
 VIEWS.upPen.after = () => {
-  const f = $('#penFile'); if (f) f.onchange = e => { const file = e.target.files[0]; if (file) onPenFile(file); };
+  const f = $('#penFile'); if (f) f.onchange = e => { const fs = [...(e.target.files || [])]; if (fs.length) onPenFiles(fs); };
+  const ap = $('#penApply'); if (ap) ap.onclick = applyPenReports;
   const setSt = (i, k, raw) => { const v = raw.trim() === '' ? null : toNum(raw); if (v != null && isNaN(v)) return toast('יש להזין מספר'); const st = IMP.pen[i] || {}; st[k] = v; if (st.v == null && st.p == null) delete IMP.pen[i]; else IMP.pen[i] = st; keepScroll(); };
   $$('[data-penv]').forEach(el => el.onchange = () => setSt(+el.dataset.penv, 'v', el.value));
   $$('[data-penp]').forEach(el => el.onchange = () => setSt(+el.dataset.penp, 'p', el.value));
