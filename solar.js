@@ -7,7 +7,7 @@
 
 KIND_LBL.solar = 'חשמל סולארי';
 const SOLAR_DEFAULT = 'חברת חשמל (סולארי)';
-const SOL = {file:null, bill:null, msg:'', busy:false, row:null};
+const SOL = {file:null, bills:[], msg:'', busy:false, row:null};
 
 function loadPdfJs(){
   if (window.pdfjsLib) return Promise.resolve();
@@ -76,62 +76,73 @@ function billSeen(b){
   const k = billKey(b);
   return impData().log.some(l => l.key === k) || (D().meta.importedDocs || []).some(x => b.billNo && x.includes(b.billNo));
 }
-async function onSolarFile(file){
-  Object.assign(SOL, {file:file.name, bill:null, msg:'', busy:true}); render();
-  try {
-    if (!/\.pdf$/i.test(file.name)) throw new Error('יש לבחור את קובץ ה־PDF של החשבון');
-    const bill = parseIec(await pdfLines(file));
-    if (!bill.rows.length) throw new Error('לא נמצאה בקובץ טבלת "זיכוי בגין יצור". ודאו שזה חשבון חברת החשמל של המערכת הסולארית.');
-    SOL.bill = bill;
-  } catch (e) { console.error(e); SOL.msg = e.message; }
+// several bills at once: each is read and checked on its own, then all new readings go in together (one undo entry per bill)
+async function onSolarFiles(files){
+  Object.assign(SOL, {file:files.map(f => f.name).join(', '), bill:null, bills:[], msg:'', busy:true}); render();
+  for (const f of files) {
+    try {
+      if (!/\.pdf$/i.test(f.name)) throw new Error('יש לבחור את קובץ ה־PDF של החשבון');
+      const bill = parseIec(await pdfLines(f));
+      if (!bill.rows.length) throw new Error('לא נמצאה טבלת "זיכוי בגין יצור" – ודאו שזה חשבון חברת החשמל של המערכת הסולארית');
+      if (SOL.bills.some(x => x.bill && billKey(x.bill) === billKey(bill))) continue; // same bill chosen twice
+      SOL.bills.push({file:f.name, bill});
+    } catch (e) { console.error(e); SOL.bills.push({file:f.name, err:e.message}); }
+  }
+  SOL.bills.sort((x, y) => (x.bill?.start || 0) - (y.bill?.start || 0));
   SOL.busy = false; render();
 }
+const solNew = () => (SOL.bills || []).filter(x => x.bill && !billSeen(x.bill));
 function commitSolar(){
-  const b = SOL.bill; if (!b || billSeen(b)) return;
-  const n = solarIncName(), deltas = [];
-  for (const r of b.rows) { const x = {t:'i', y:String(r.to.getFullYear()), n, m:r.to.getMonth(), v:r.amt}; applyDelta(x, 1); deltas.push(x); }
-  impData().log.unshift({id:Date.now(), kind:'solar', key:billKey(b), file:SOL.file + (b.billNo ? ' · ' + b.billNo : ''), date:today(), n:deltas.length, total:r2(sum(b.rows.map(r => r.amt))), deltas, hashes:[]});
-  markDirty(); toast(`נוספו ${plain(sum(b.rows.map(r => r.amt)))} להכנסות "${n}". לחצו "שמירה" כדי לשמור.`, 4500);
-  Object.assign(SOL, {file:null, bill:null, msg:''}); render();
+  const list = solNew(); if (!list.length) return;
+  const n = solarIncName(); let tot = 0;
+  for (const {file, bill:b} of list) {
+    const deltas = [];
+    for (const r of b.rows) { const x = {t:'i', y:String(r.to.getFullYear()), n, m:r.to.getMonth(), v:r.amt}; applyDelta(x, 1); deltas.push(x); }
+    const t = r2(sum(b.rows.map(r => r.amt))); tot += t;
+    impData().log.unshift({id:Date.now() + Math.random(), kind:'solar', key:billKey(b), file:file + (b.billNo ? ' · ' + b.billNo : ''), date:today(), n:deltas.length, total:t, deltas, hashes:[]});
+  }
+  markDirty(); toast(`נקלטו ${list.length} חשבונות: נוספו ${plain(tot)} להכנסות "${n}". לחצו "שמירה" כדי לשמור.`, 4500);
+  Object.assign(SOL, {file:null, bills:[], msg:''}); render();
 }
 const SUN_ICON = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
 VIEWS.upSolar = () => {
-  const b = SOL.bill, n = solarIncName(), seen = b && billSeen(b);
+  const bills = SOL.bills || [], ok = bills.filter(x => x.bill), fresh = solNew(), n = solarIncName();
   const curVal = r => { const y = String(r.to.getFullYear()), row = (D().incomes[y] || []).find(x => x.name === n); return row ? +row.months[r.to.getMonth()] || 0 : 0; };
-  const sumRows = b ? r2(sum(b.rows.map(r => r.amt))) : 0;
-  const totalOk = b && b.total != null && Math.abs(b.total - sumRows) < 0.05;
-  // months that receive more than one line from this bill are shown with the combined "after" value
-  const after = {}; if (b) for (const r of b.rows) { const k = ymKey(r.to); after[k] = (after[k] ?? curVal(r)) + r.amt; }
+  const rows = fresh.flatMap(x => x.bill.rows.map(r => ({...r, file:x.file, billNo:x.bill.billNo}))).sort((a, b) => a.to - b.to);
+  const sumRows = r2(sum(rows.map(r => r.amt)));
+  // months that receive more than one reading (from one bill or several) are shown with the combined "after" value
+  const after = {}; for (const r of rows) { const k = ymKey(r.to); after[k] = (after[k] ?? curVal(r)) + r.amt; }
   return `
-  <section class="card"><div class="card-h"><h3>העלאת חשבון חברת החשמל</h3><span class="hint">PDF · הקובץ נקרא רק במכשיר הזה</span></div>
-    <label class="btn primary" style="justify-self:start"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>בחירת חשבון (PDF)<input type="file" id="solFile" accept=".pdf,application/pdf" hidden></label>
-    ${SOL.file ? `<p style="margin:0">קובץ: <b>${esc(SOL.file)}</b>${SOL.busy ? ' · קורא…' : ''} <button class="btn small ghost" id="solClear" type="button">ניקוי</button></p>` : ''}
+  <section class="card"><div class="card-h"><h3>העלאת חשבון חברת החשמל</h3><span class="hint">PDF · אפשר כמה חשבונות יחד · הקובץ נקרא רק במכשיר הזה</span></div>
+    <label class="btn primary" style="justify-self:start"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>בחירת חשבונות (PDF, אפשר כמה יחד)<input type="file" id="solFile" accept=".pdf,application/pdf" multiple hidden></label>
+    ${SOL.file ? `<p style="margin:0">קבצים: <b>${esc(SOL.file)}</b>${SOL.busy ? ' · קורא…' : ''} <button class="btn small ghost" id="solClear" type="button">ניקוי</button></p>` : ''}
+    ${bills.length ? `<ul class="pdf-info">${bills.map(x => { if (x.err) return `<li class="down">${esc(x.file)}: ${esc(x.err)}</li>`; const b = x.bill, t = r2(sum(b.rows.map(r => r.amt))), okT = b.total == null || Math.abs(b.total - t) < 0.05, seen = billSeen(b);
+      return `<li class="${seen || !okT ? 'down' : ''}">${esc(x.file)} · חשבונית ${esc(b.billNo || '—')} · ${fmtDate(b.start)}–${fmtDate(b.end)}: ${b.rows.length} קריאות, ${plain(t)}${b.total == null ? '' : okT ? ' ✓ תואם לסה״כ בחשבון' : ` ⚠ בחשבון כתוב ${plain(b.total)}`}${seen ? ' · כבר נקלט – יידלג' : ''}</li>`; }).join('')}</ul>` : ''}
     ${SOL.msg ? `<p class="note" style="margin:0">${esc(SOL.msg)}</p>` : ''}
     <details class="note"><summary><b>מה נקלט ואיך?</b></summary>
-      <p>מהחשבון נלקחת רק טבלת <b>"זיכוי בגין יצור"</b> (עמוד 2). כל שורת קריאה נכנסת לחודש של תאריך הקריאה, ו<b>מתווספת</b> לסכום שכבר קיים באותו חודש. כך חודש שמתחלק בין שני חשבונות מקבל את שני החלקים.</p>
+      <p>מכל חשבון נלקחת רק טבלת <b>"זיכוי בגין יצור"</b> (עמוד 2). כל שורת קריאה נכנסת לחודש של תאריך הקריאה, ו<b>מתווספת</b> לסכום שכבר קיים באותו חודש. כך חודש שמתחלק בין שני חשבונות מקבל את שני החלקים.</p>
       <p>עלות מערכתית, מע"מ וזיכויי ריבית לא נכנסים. חשבון שכבר נקלט מזוהה לפי מספר החשבונית ולא ייקלט פעמיים. בדף הבנק מסמנים את זיכוי חברת החשמל כ"דילוג", כדי שלא ייספר פעמיים.</p></details>
   </section>
-  ${b ? `
+  ${ok.length ? `
   <div class="kpis">
-    <div class="kpi hero"><span class="lbl">זיכוי ייצור בחשבון</span><span class="val">${money(sumRows)}</span><span class="sub">${b.rows.length} קריאות · ${fmtDate(b.start)}–${fmtDate(b.end)}</span></div>
-    <div class="kpi"><span class="lbl">מספר חשבונית</span><span class="val" style="font-size:18px">${esc(b.billNo || '—')}</span><span class="sub">${seen ? '<span class="down">החשבון הזה כבר נקלט</span>' : 'עדיין לא נקלט'}</span></div>
-    <div class="kpi"><span class="lbl">בדיקה מול סה"כ בחשבון</span><span class="val ${b.total == null ? '' : totalOk ? 'up' : 'down'}" style="font-size:18px">${b.total == null ? 'לא נמצא סה"כ' : totalOk ? '✓ תואם' : '✗ ' + plain(b.total)}</span><span class="sub">סכום השורות ${plain(sumRows)}</span></div>
+    <div class="kpi hero"><span class="lbl">זיכוי ייצור לקליטה</span><span class="val">${money(sumRows)}</span><span class="sub">${fresh.length} חשבונות · ${rows.length} קריאות</span></div>
+    <div class="kpi"><span class="lbl">חשבונות שכבר נקלטו</span><span class="val" style="font-size:18px">${ok.length - fresh.length}</span><span class="sub">${ok.length - fresh.length ? 'לא ייקלטו שוב' : 'אין'}</span></div>
   </div>
-  <section class="card"><div class="card-h"><h3>קריאות מונה</h3>
+  ${rows.length ? `<section class="card"><div class="card-h"><h3>קריאות מונה</h3>
       <label class="field" style="max-width:260px">קליטה לשורת הכנסה<select class="inp" id="solRow">${[...new Set([...incList(), n])].map(x => `<option ${x === n ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label></div>
-    <div class="tbl-wrap"><table><thead><tr><th>תקופת קריאה</th><th>חודש</th><th class="n">קוט"ש</th><th class="n">זיכוי</th><th class="n">קיים בחודש</th><th class="n">אחרי הקליטה</th></tr></thead><tbody>
-    ${b.rows.map((r, i) => { const k = ymKey(r.to), last = b.rows.findLastIndex(x => ymKey(x.to) === k) === i; return `<tr>
-      <td>${fmtDate(r.from)} – ${fmtDate(r.to)}</td><td>${MONTHS[r.to.getMonth()]} ${r.to.getFullYear()}</td><td class="n">${r.kwh ?? ''}</td>
-      <td class="n up">${money(r.amt)}</td><td class="n">${money(curVal(r))}</td><td class="n"><b>${seen ? '—' : last ? money(after[k]) : '↓'}</b></td></tr>`; }).join('')}
+    <div class="tbl-wrap"><table><thead><tr><th>תקופת קריאה</th><th>חודש</th>${fresh.length > 1 ? '<th>חשבונית</th>' : ''}<th class="n">קוט"ש</th><th class="n">זיכוי</th><th class="n">קיים בחודש</th><th class="n">אחרי הקליטה</th></tr></thead><tbody>
+    ${rows.map((r, i) => { const k = ymKey(r.to), last = rows.findLastIndex(x => ymKey(x.to) === k) === i; return `<tr>
+      <td>${fmtDate(r.from)} – ${fmtDate(r.to)}</td><td>${MONTHS[r.to.getMonth()]} ${r.to.getFullYear()}</td>${fresh.length > 1 ? `<td class="hint">${esc(r.billNo || '')}</td>` : ''}<td class="n">${r.kwh ?? ''}</td>
+      <td class="n up">${money(r.amt)}</td><td class="n">${money(curVal(r))}</td><td class="n"><b>${last ? money(after[k]) : '↓'}</b></td></tr>`; }).join('')}
     </tbody></table></div>
-    <div class="row"><button class="btn primary" id="solCommit" type="button" ${seen ? 'disabled' : ''}>הוספה להכנסות</button>
-      <span class="hint">${seen ? 'החשבון כבר נקלט. כדי לקלוט מחדש, בטלו קודם את הקליטה הקודמת למטה.' : 'אפשר לבטל את הקליטה בכל רגע מהרשימה למטה.'}</span></div>
-  </section>` : ''}
+    <div class="row"><button class="btn primary" id="solCommit" type="button">הוספה להכנסות${fresh.length > 1 ? ` (${fresh.length} חשבונות)` : ''}</button>
+      <span class="hint">כל חשבון נרשם בנפרד ב״קליטות אחרונות״ – אפשר לבטל כל אחד.</span></div>
+  </section>` : `<section class="card"><p class="hint" style="margin:0">כל החשבונות שנבחרו כבר נקלטו. כדי לקלוט מחדש, בטלו קודם את הקליטה הקודמת למטה.</p></section>`}` : ''}
   ${logHtml(['solar'])}`;
 };
 VIEWS.upSolar.after = () => {
-  const f = $('#solFile'); if (f) f.onchange = e => { const file = e.target.files[0]; if (file) onSolarFile(file); };
-  const c = $('#solClear'); if (c) c.onclick = () => { Object.assign(SOL, {file:null, bill:null, msg:''}); render(); };
+  const f = $('#solFile'); if (f) f.onchange = e => { const fs = [...(e.target.files || [])]; if (fs.length) onSolarFiles(fs); };
+  const c = $('#solClear'); if (c) c.onclick = () => { Object.assign(SOL, {file:null, bills:[], msg:''}); render(); };
   const r = $('#solRow'); if (r) r.onchange = () => { SOL.row = r.value; keepScroll(); };
   const cm = $('#solCommit'); if (cm) cm.onclick = commitSolar;
   bindLogRules();

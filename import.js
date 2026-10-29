@@ -269,6 +269,7 @@ function undoImport(id){
   }
   else for (const x of l.deltas || []) applyDelta(x, -1);
   ip.pending = ip.pending.filter(q => q.imp !== l.id); // its open questions go too
+  if (l.kind === 'solar' && /^iec\|/.test(l.key || '')) { const no = l.key.slice(4), m = D().meta; if (m.importedDocs) m.importedDocs = m.importedDocs.filter(x => !x.includes(no)); } // the bill can be imported again
   ip.log.splice(i, 1); markDirty(); toast('הקליטה בוטלה'); render();
 }
 function resetImp(){ if (IMP.pdfUrl) URL.revokeObjectURL(IMP.pdfUrl); Object.assign(IMP, {file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, pen:{}, penRows:[], pdfUrl:null, msg:'', card:'', pdfInfo:null, confirm:null}); }
