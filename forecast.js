@@ -5,9 +5,9 @@
    Inputs live on the page and are saved in D().settings.forecast. */
 
 const FC_ICON = '<path d="M3 20h18"/><path d="M5 16l4-5 4 3 6-8"/><circle cx="19" cy="6" r="1.6"/>';
-const FC_DEF = {who:'p1', show:null, age:60, ret:7, infl:2.5, real:false, reRet:3, mortRate:4, stop1:67, stop2:65, coef:null, assets:{}};
+const FC_DEF = {who:'p1', show:null, age:60, saving:null, savRet:2, ret:7, infl:2.5, real:false, reRet:3, mortRate:4, stop1:67, stop2:65, coef:null, assets:{}};
 const FC_GROUP_RET = {'תיקי מסחר עצמאי':7, 'קריפטו':7, 'קרנות הון (חול)':7, 'קרנות כספית':4, 'עוש אמריקה':0, 'מטח':0};
-const FC_CAT = {pension:'פנסיה', study:'קרנות השתלמות', gemel:'גמל וביטוח מנהלים', liquid:'השקעות וחסכונות', re:'נדל״ן (נטו)'};
+const FC_CAT = {pension:'פנסיה', study:'קרנות השתלמות', gemel:'גמל וביטוח מנהלים', liquid:'השקעות וחסכונות', save:'חיסכון חודשי', re:'נדל״ן (נטו)'};
 const FC = {open:{}};
 
 function FS(){
@@ -16,6 +16,7 @@ function FS(){
   scenarioLoad('forecast', f);
   for (const [k, v] of Object.entries(FC_DEF)) if (f[k] === undefined) f[k] = typeof v === 'object' && v ? {} : v;
   if (!Array.isArray(f.show) || !f.show.length) f.show = ['p1', 'p2'];
+  if (f.saving == null) f.saving = (typeof RS === 'function' && +RS().savings) || 0; // starts from the monthly savings in "פרישה מוקדמת"
   if (f.coef == null) f.coef = (typeof RS === 'function' && RS().pen1?.coef) || 200;
   return f;
 }
@@ -26,12 +27,7 @@ const fcName = k => (D().settings.people || {})[k] || k;
 function assetAssume(a, F){
   const cur = F.assets[a.name];
   if (cur) return cur;
-  let dep = 0;
-  if (typeof RS === 'function') { // the monthly savings from "פרישה מוקדמת" go to the biggest trading account
-    const tr = D().assets.filter(x => x.group === 'תיקי מסחר עצמאי').sort((x, y) => assetValue(y) - assetValue(x))[0];
-    if (tr && tr.name === a.name) dep = +RS().savings || 0;
-  }
-  return {ret:FC_GROUP_RET[a.group] ?? F.ret, dep};
+  return {ret:FC_GROUP_RET[a.group] ?? F.ret, dep:0}; // the monthly savings has its own line (F.saving)
 }
 
 /* ---------- the instruments ---------- */
@@ -60,6 +56,8 @@ function fcInstruments(F){
     const as = assetAssume(a, F);
     out.push({id:'a-' + a.name, owner:'', cat:'liquid', name:a.name, group:a.group, now:assetValue(a), dep:+as.dep || 0, depNet:+as.dep || 0, ret:+as.ret, fee:0, asset:a});
   }
+  // the household's monthly savings (what is left each month), set on the page
+  if (+F.saving) out.push({id:'save', owner:'', cat:'save', name:'חיסכון חודשי (כסף פנוי)', now:0, dep:+F.saving, depNet:+F.saving, ret:+F.savRet || 0, fee:0});
   return out;
 }
 // loans: mortgages (balance, payment) from "פרישה מוקדמת" + the pension loan from the report
@@ -114,7 +112,7 @@ function fcSnap(st, ls){
   const c = {}; for (const s of st) c[s.cat] = (c[s.cat] || 0) + s.v;
   const debt = sum(ls.map(l => Math.max(0, l.v)));
   const mort = sum(ls.filter(l => l.prop).map(l => Math.max(0, l.v)));
-  return {pension:c.pension || 0, study:(c.study || 0) + (c.gemel || 0), liquid:c.liquid || 0, re:(c.re || 0) - mort, debt, net:sum(Object.values(c)) - debt};
+  return {pension:c.pension || 0, study:(c.study || 0) + (c.gemel || 0), liquid:c.liquid || 0, save:c.save || 0, re:(c.re || 0) - mort, debt, net:sum(Object.values(c)) - debt};
 }
 
 /* ---------- view ---------- */
@@ -177,6 +175,7 @@ VIEWS.forecast = () => {
       <label>תשואה ${inp('ret', F.ret)}%</label>
       <label>מקדם ${inp('coef', F.coef)}</label>
       <label>הפקדות עד ${ppl.map(k => inp(k === 'p1' ? 'stop1' : 'stop2', k === 'p1' ? F.stop1 : F.stop2)).join('/')}</label>
+      ${both ? `<label class="fc-save">חיסכון חודשי <input class="inp wide" data-fc="saving" inputmode="numeric" value="${F.saving}">₪</label><label title="החיסכון צמוד למדד – ברירת המחדל 2% בשנה">ריבית (צמוד) ${inp('savRet', F.savRet)}%</label>` : ''}
       ${both ? `<label>נדל״ן ${inp('reRet', F.reRet)}%</label><label>משכנתא ${inp('mortRate', F.mortRate)}%</label>` : ''}
       <label>אינפלציה ${inp('infl', F.infl)}%</label>
       <label class="fc-real"><input type="checkbox" data-fcchk="real" ${F.real ? 'checked' : ''}> בשקלים של היום</label>
@@ -188,6 +187,8 @@ VIEWS.forecast = () => {
     <div class="kpi hero"><span class="lbl">${both ? 'שווי נקי' : 'סך החיסכון של ' + esc(whoLbl)} ב־${R.Y}</span><span class="val">${M(fin.net)}</span><span class="sub">היום ${plain(R.start.net)}</span></div>
     <div class="kpi"><span class="lbl">פנסיה${both ? ' (שניכם)' : ''}</span><span class="val">${M(tot('pension'))}</span><span class="sub">קצבה ${P(tot('pension') / F.coef)} בחודש</span></div>
     <div class="kpi"><span class="lbl">השתלמות וגמל</span><span class="val">${M(tot('study') + tot('gemel'))}</span><span class="sub">היום ${plain(sum([...by('study'), ...by('gemel')].map(s => s.now)))}</span></div>
+    ${both && +F.saving ? (() => { const sv = R.st.find(x => x.cat === 'save'), paid = sv ? sv.paid : 0, val = sv ? sv.v : 0;
+      return `<div class="kpi"><span class="lbl">חיסכון חודשי שנצבר</span><span class="val">${M(val)}</span><span class="sub">${plain(+F.saving)} בחודש × ${Math.round(R.months)} חודשים = ${plain(paid)} הופקדו${val - paid > 0 ? ` · ${P(val - paid)} רווח` : ''}</span></div>`; })() : ''}
     ${both ? `<div class="kpi"><span class="lbl">השקעות וחסכונות</span><span class="val">${M(tot('liquid'))}</span><span class="sub">ברוקרים, קרנות, קריפטו, פיקדונות</span></div>
     <div class="kpi"><span class="lbl">נדל״ן נטו</span><span class="val">${M(fin.re)}</span><span class="sub">שווי פחות משכנתאות</span></div>` : ''}
   </div>
@@ -197,11 +198,12 @@ VIEWS.forecast = () => {
   ${table('study', {owner:1, fee:1})}
   ${table('gemel', {owner:1, fee:1})}
   ${table('liquid', {})}
+  ${table('save', {})}
   ${reTable}
   ${both ? '' : `<p class="hint">השקעות משותפות (ברוקרים, קרנות, קריפטו) ונדל״ן מוצגים כששניכם מסומנים.</p>`}
   ${!both ? '' : `<details class="card"><summary><b>הנחות לכל השקעה</b> <span class="hint">תשואה שנתית והפקדה חודשית לכל ברוקר / קרן / חשבון</span></summary>
     <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>השקעה</th><th class="n">היום</th><th class="n">תשואה בשנה</th><th class="n">הפקדה בחודש</th></tr></thead><tbody>${assumeRows}</tbody></table></div>
-    <p class="hint">ברירת המחדל: ״החיסכון החודשי״ מעמוד פרישה מוקדמת נכנס לתיק המסחר הגדול. בקרנות הפנסיה, ההשתלמות והגמל ההפקדות לקוחות מדוח הפנסיה, והתשואה היא ${F.ret}% פחות דמי הניהול של כל קרן.</p>
+    <p class="hint">החיסכון החודשי נקבע בראש העמוד (״חיסכון חודשי״) ונצבר בשורה נפרדת. כאן אפשר להוסיף הפקדה קבועה להשקעה מסוימת. בקרנות הפנסיה, ההשתלמות והגמל ההפקדות לקוחות מדוח הפנסיה, והתשואה היא ${F.ret}% פחות דמי הניהול של כל קרן.</p>
   </details>`}`}`;
 };
 VIEWS.forecast.after = () => {
@@ -218,8 +220,8 @@ VIEWS.forecast.after = () => {
   const el = $('#cFc'); if (!el) return;
   const R = fcRun(F);
   const Ys = R.years, y0 = Ys[0].y, disc = y => F.real ? Math.pow(1 + F.infl / 100, y - y0) : 1;
-  const ser = (k, i) => ({label:{pension:'פנסיה', study:'השתלמות וגמל', liquid:'השקעות וחסכונות', re:'נדל״ן נטו'}[k], data:Ys.map(x => Math.round(x[k] / disc(x.y))), backgroundColor:pal(i), stack:'s'});
-  chart('cFc', {type:'bar', stacked:true, data:{labels:Ys.map(x => `${x.y} (${x.y - fcBirth(F.who)})`), datasets:R.both ? [ser('pension', 0), ser('study', 1), ser('liquid', 2), ser('re', 3)] : [ser('pension', 0), ser('study', 1)]}});
+  const ser = (k, i) => ({label:{pension:'פנסיה', study:'השתלמות וגמל', liquid:'השקעות וחסכונות', save:'חיסכון חודשי', re:'נדל״ן נטו'}[k], data:Ys.map(x => Math.round(x[k] / disc(x.y))), backgroundColor:pal(i), stack:'s'});
+  chart('cFc', {type:'bar', stacked:true, data:{labels:Ys.map(x => `${x.y} (${x.y - fcBirth(F.who)})`), datasets:R.both ? [ser('pension', 0), ser('study', 1), ser('liquid', 2), ...(+F.saving ? [ser('save', 4)] : []), ser('re', 3)] : [ser('pension', 0), ser('study', 1)]}});
 };
 
 /* place "תחזיות" after "פנסיה וקרנות" (pens.js sets the final menu order) */
