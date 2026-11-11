@@ -5,7 +5,7 @@
 
 const IMP = {kind:null, file:null, rows:[], sheets:[], map:null, monthMode:'tx', onlyOpen:false, learn:true, pen:{}, penRows:[], pdfUrl:null, msg:'', card:'', pdfInfo:null};
 const KIND_LBL = {bank:'בנק', card:'אשראי', pen:'פנסיה וקרנות'};
-const CARD_RX = /ישראכרט|isracard|מקס איט|max it|\bmax\b|כאל|\bcal\b|לאומי קארד|אמריקן אקספרס|american express|דיינרס|diners|ויזה|visa|מסטרקארד|כרטיס(?:י)? אשראי/i;
+const CARD_RX = /ישראכרט|isracard|מקס איט|max it|\bmax\b|כאל|\bcal\b|לאומי קארד|אמריקן אקספרס|american express|דיינרס|diners|ויזה|visa|מסטרקארד|מסטרקרד|מאסטרקארד|כרטיס(?:י)? אשראי/i;
 const PEN_RX = /פנסי|השתלמות|גמל|קרנות|תיק/;
 
 function impData(){ const d = D(); d.imports ||= {log:[], rules:[]}; d.imports.log ||= []; d.imports.rules ||= []; d.imports.pending ||= []; d.imports.cards ||= {}; return d.imports; }
@@ -89,6 +89,76 @@ function extract(sheet, map, kind){
   return out;
 }
 
+/* ---------- bank statements in PDF (Mizrahi, Leumi and similar "תנועות בחשבון") ----------
+   Each amount is assigned to the column whose header sits above it (by horizontal position):
+   one signed column ("זכות/חובה", "סכום") or separate "חובה" / "זכות" columns. "יתרה" is used only to check the reading. */
+async function pdfRowsXY(file){
+  await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
+  const rows = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    const items = tc.items.filter(it => it.str && it.str.trim()).map(it => ({x:it.transform[4] + (it.width || 0) / 2, y:it.transform[5], s:it.str.trim()}));
+    items.sort((a, b) => b.y - a.y || b.x - a.x);
+    let cur = null;
+    for (const it of items) { if (!cur || Math.abs(cur.y - it.y) > 2.5) { cur = {y:it.y, page:p, items:[]}; rows.push(cur); } cur.items.push(it); }
+  }
+  rows.forEach(r => r.items.sort((a, b) => b.x - a.x));
+  return rows;
+}
+const DATE_T = /^\d{1,2}\/\d{1,2}\/\d{2,4}$/, MONEY_T = /^[-−]?₪?\s?-?[\d,]+\.\d{2}-?$/;
+function parseBankPdf(rows){
+  const res = {items:[], account:'', check:null};
+  let cols = null; // {signed, debit, credit, balance} → x positions
+  const money = t => { const neg = /^[-−]|-$/.test(t.replace('₪', '').trim()); const v = parseFloat(t.replace(/[^\d.]/g, '')); return isNaN(v) ? null : (neg ? -v : v); };
+  const bal = [];
+  for (const r of rows) {
+    const toks = r.items.map(i => i.s), txt = toks.join(' ');
+    const acc = txt.match(/חשבון(?: מספר)?:?\s*([\d\-\/]{5,})/); if (acc && !res.account) res.account = acc[1];
+    if (toks.some(t => /^תאריך$/.test(t)) && toks.some(t => /זכות|חובה|סכום/.test(t))) { // header row (repeats on each page)
+      cols = {};
+      for (const it of r.items) {
+        if (/זכות\s*\/\s*חובה|חובה\s*\/\s*זכות|^סכום/.test(it.s)) cols.signed = it.x;
+        else if (/חובה/.test(it.s)) cols.debit = it.x;
+        else if (/זכות/.test(it.s)) cols.credit = it.x;
+        else if (/יתרה/.test(it.s)) cols.balance = it.x;
+      }
+      continue;
+    }
+    if (!DATE_T.test(toks[0] || '')) continue;
+    const date = toDate(toks[0]); if (!date) continue;
+    const mons = r.items.filter(i => MONEY_T.test(i.s)), texts = r.items.slice(1).filter(i => !DATE_T.test(i.s) && !MONEY_T.test(i.s) && !/^\d+$/.test(i.s) && i.s !== '₪' && i.s !== '-');
+    if (!mons.length || !texts.length) continue;
+    let amt = null, b = null;
+    if (cols && Object.keys(cols).length) {
+      for (const m of mons) {
+        const near = Object.entries(cols).sort((a, c) => Math.abs(a[1] - m.x) - Math.abs(c[1] - m.x))[0][0], v = money(m.s);
+        if (near === 'balance') b = v;
+        else if (near === 'debit') amt = Math.abs(v);            // money going out → positive (an expense)
+        else if (near === 'credit') amt = -Math.abs(v);          // money coming in → negative
+        else if (near === 'signed') amt = -v;                    // statement sign: minus = out
+      }
+    } else { amt = -money(mons[0].s); if (mons[1]) b = money(mons[1].s); } // no header: first amount is the movement
+    if (amt == null || !amt) continue;
+    const desc = texts.map(i => i.s).join(' ').replace(/\)י\(|\(י\)/g, '').replace(/\s+/g, ' ').trim();
+    res.items.push({date, charge:null, desc:desc || '(ללא תיאור)', amt:r2(amt), sheet:'PDF'});
+    if (b != null) bal.push({i:res.items.length - 1, b});
+  }
+  // check against the balances printed on the statement: the movements of each block of rows must equal the change in balance
+  // (newest-first lists: block k moves balance k+1 → k; oldest-first lists: block k moves balance k-1 → k)
+  if (bal.length >= 3) {
+    const mv = (from, to) => sum(res.items.slice(from, to + 1).map(x => -x.amt));
+    let desc = 0, asc = 0, n = 0;
+    for (let k = 1; k < bal.length - 1; k++) {
+      const block = mv(bal[k - 1].i + 1, bal[k].i); n++;
+      if (Math.abs(block - (bal[k].b - bal[k + 1].b)) < 0.05) desc++;
+      if (Math.abs(block - (bal[k].b - bal[k - 1].b)) < 0.05) asc++;
+    }
+    res.check = Math.max(desc, asc) === n ? true : Math.max(desc, asc) >= n * 0.8 ? null : false;
+  }
+  return res;
+}
+
 /* ---------- card statements in PDF (e.g. Leumi "פרוט עסקאות לכרטיס") ----------
    pdf.js returns Hebrew lines right-to-left, so a number comes back as reversed pieces: "10" "." "194" → 194.10 */
 function pdfSegs(tokens){
@@ -129,11 +199,16 @@ function parseCardPdf(lines){
 // a rule learned on a specific card (r.c) wins there and is not applied to other cards (e.g. "סופר" → סופר טל only on Tal's card)
 // rules with a reference amount (r.a) tell apart charges with the same name (e.g. 3 policies of one insurer): the closest amount wins
 function ruleFor(desc, card, amt){
-  const n = normDesc(desc); let best = null, score = -1, gap = Infinity;
+  const n = normDesc(desc); let best = null, score = -Infinity;
   for (const r of impData().rules) {
     if (!r.m || !n.includes(r.m) || (r.c && r.c !== card)) continue;
-    const sc = r.m.length + (r.c ? 1000 : 0), g = r.a != null && amt != null ? Math.abs(r.a - amt) : Infinity;
-    if (sc > score || (sc === score && g < gap)) { best = r; score = sc; gap = g; }
+    let sc = r.m.length + (r.c ? 1000 : 0);
+    if (r.a != null) { // amount rule: only near its amount (15%, at least ₪30), and then it beats a rule without an amount
+      if (amt == null) continue;
+      const gap = Math.abs(r.a - amt); if (gap > Math.max(Math.abs(r.a) * 0.15, 30)) continue;
+      sc += 500 - gap / 1e6;
+    }
+    if (sc > score) { best = r; score = sc; }
   }
   return best;
 }
@@ -282,7 +357,13 @@ function fileInfo(name, items, period, card, stated){
 }
 async function readOne(f, kind, single){ // → {items, info}
   if (/\.pdf$/i.test(f.name)) {
-    if (kind !== 'card') return {items:[], info:{t:`${f.name}: קובץ PDF של בנק לא נקרא כאן – הורידו אקסל או CSV`, bad:true}};
+    if (kind === 'bank') {
+      const r = parseBankPdf(await pdfRowsXY(f));
+      if (!r.items.length) return {items:[], info:{t:`${f.name}: לא זוהו תנועות ב־PDF – אפשר להוריד מהבנק אקסל או CSV`, bad:true}};
+      const out = sum(r.items.filter(i => i.amt > 0).map(i => i.amt)), inn = -sum(r.items.filter(i => i.amt < 0).map(i => i.amt));
+      const ds = r.items.map(i => i.date).sort((a, b) => a - b);
+      return {items:r.items, info:{t:`${f.name}${r.account ? ' · חשבון ' + r.account : ''}: ${r.items.length} תנועות, ${fmtDate(ds[0])}–${fmtDate(ds[ds.length - 1])} · יציאות ${plain(out)} · כניסות ${plain(inn)}${r.check == null ? '' : r.check ? ' ✓ תואם ליתרות בדף' : ' ⚠ לא תואם ליתרות בדף – בדקו'}`, bad:r.check === false}};
+    }
     const r = parseCardPdf(await pdfLines(f));
     if (!r.items.length) return {items:[], info:{t:`${f.name}: לא זוהו עסקאות`, bad:true}};
     return {items:r.items, info:fileInfo(f.name, r.items, r.period, r.card, r.total)};
@@ -485,7 +566,7 @@ function navBadges(){
 const UP_ICON = '<path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>';
 function howTo(kind){
   if (kind === 'bank') return `<details class="note"><summary><b>איך מורידים את הקובץ מהבנק?</b></summary>
-    <p>נכנסים לאתר הבנק ← <b>עובר ושב</b> ← <b>תנועות בחשבון</b> ← בוחרים טווח תאריכים ← <b>ייצוא לאקסל</b>. רוב הבנקים (לאומי, הפועלים, דיסקונט, מזרחי, הבינלאומי) מאפשרים xls או CSV, ושני הפורמטים עובדים כאן.</p>
+    <p>נכנסים לאתר הבנק ← <b>עובר ושב</b> ← <b>תנועות בחשבון</b> ← בוחרים טווח תאריכים ← <b>ייצוא לאקסל</b>. רוב הבנקים (לאומי, הפועלים, דיסקונט, מזרחי, הבינלאומי) מאפשרים xls, CSV או PDF – כל הפורמטים עובדים כאן, ואפשר לבחור כמה קבצים יחד. ב־PDF הקריאה נבדקת מול היתרות שבדף.</p>
     <p>חיובי כרטיסי אשראי בעו״ש מסומנים אוטומטית כ״דילוג״, כי הפירוט שלהם נקלט מקובץ האשראי. כך אותה הוצאה לא נספרת פעמיים.</p></details>`;
   return `<details class="note"><summary><b>איך מורידים את הקובץ מחברת האשראי?</b></summary>
     <p><b>ישראכרט / אמריקן אקספרס:</b> האזור האישי ← פירוט עסקאות ← ייצוא לאקסל.<br><b>מקס:</b> האזור האישי ← פירוט החיובים ← הורדה לאקסל.<br><b>כאל:</b> האזור האישי ← פירוט עסקאות ← ייצוא.<br><b>כרטיס לאומי (דרך אתר הבנק):</b> כרטיסי אשראי ← פירוט עסקאות ← שמירה/הדפסה כ־PDF. אפשר לבחור כמה קבצים (חודשים) יחד.</p>
@@ -546,7 +627,7 @@ function txView(kind){
   const out = sum(rows.filter(r => r.amt > 0).map(r => r.amt)), inn = -sum(rows.filter(r => r.amt < 0).map(r => r.amt));
   const shown = IMP.onlyOpen ? rows.filter(r => !r.v) : rows;
   return `
-  <section class="card"><div class="card-h"><h3>העלאת קובץ ${kind === 'bank' ? 'תנועות בנק' : 'פירוט אשראי'}</h3><span class="hint">xlsx · xls · csv${kind === 'card' ? ' · PDF של כרטיס לאומי' : ''} · הקובץ נקרא רק במכשיר הזה</span></div>
+  <section class="card"><div class="card-h"><h3>העלאת קובץ ${kind === 'bank' ? 'תנועות בנק' : 'פירוט אשראי'}</h3><span class="hint">PDF · xlsx · xls · csv · הקובץ נקרא רק במכשיר הזה</span></div>
     <label class="btn primary" style="justify-self:start">${UP_ICON ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${UP_ICON}</svg>` : ''}בחירת קבצים (אפשר כמה יחד)<input type="file" id="txFile" accept=".xlsx,.xls,.csv,.xlsm,.pdf" multiple hidden></label>
     ${has ? `<p style="margin:0">קובץ: <b>${esc(IMP.file)}</b> <button class="btn small ghost" id="txClear" type="button">ניקוי</button></p>` : ''}
     ${IMP.msg && IMP.kind === kind ? `<p class="note" style="margin:0">${esc(IMP.msg)}</p>` : ''}
