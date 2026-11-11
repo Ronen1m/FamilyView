@@ -319,7 +319,7 @@ function commitTx(){
   for (const r of IMP.rows) {
     if (!r.v) continue;
     if (r.v === 'later') { if (!r.dup) later.push(r); continue; }
-    if (r.v === 'skip') { if (!r.dup) { hashes.push(r.h); if (IMP.learn && r.why !== 'חיוב כרטיס – מפורט בקובץ האשראי' && r.why !== 'לפי כלל' && r.touched) learnRule(r.desc, {t:'s'}, r.card); } continue; }
+    if (r.v === 'skip') { if (!r.dup) hashes.push(r.h); continue; } // a skip is for this time only – never saved as a rule
     const {y, m} = rowMonth(r);
     if (r.v.startsWith('e:')) {
       const c = IMP.cats[+r.v.slice(2)];
@@ -480,7 +480,7 @@ function suggestFor(r){
   }
   return out.slice(0, 3);
 }
-const valLabel = v => v === 'skip' ? 'לא לקלוט' : v.startsWith('e:') ? IMP.cats[+v.slice(2)]?.i : v.startsWith('i:') ? 'הכנסה: ' + IMP.incs[+v.slice(2)] : v.startsWith('n:') ? '＋ ' + v.slice(2).split('|')[1] + ' (שורה חדשה)' : '';
+const valLabel = v => v === 'skip' ? 'דילוג (רק הפעם)' : v.startsWith('e:') ? IMP.cats[+v.slice(2)]?.i : v.startsWith('i:') ? 'הכנסה: ' + IMP.incs[+v.slice(2)] : v.startsWith('n:') ? '＋ ' + v.slice(2).split('|')[1] + ' (שורה חדשה)' : '';
 // a new expense row: create it (in every year that has the section) and refresh the category list without breaking existing choices
 function addCategory(dom, name){
   const keep = r => r.v && r.v.startsWith('e:') ? IMP.cats[+r.v.slice(2)] : null;
@@ -540,7 +540,7 @@ function answerPending(q, v){
   const ids = new Set(q.rows.map(p => p.id));
   ip.pending = ip.pending.filter(p => !ids.has(p.id));
   ip.log.unshift({id:Date.now(), kind:q.rows[0].kind, file:'תשובה: ' + q.desc, date:today(), n:deltas.length, total:r2(total), deltas, hashes});
-  learnRule(q.desc, v === 'skip' ? {t:'s'} : v.startsWith('e:') ? {t:'e', d:IMP.cats[+v.slice(2)].d, i:IMP.cats[+v.slice(2)].i} : {t:'i', n:IMP.incs[+v.slice(2)]}, q.card);
+  if (v !== 'skip') learnRule(q.desc, v.startsWith('e:') ? {t:'e', d:IMP.cats[+v.slice(2)].d, i:IMP.cats[+v.slice(2)].i} : {t:'i', n:IMP.incs[+v.slice(2)]}, q.card);
   markDirty(); toast(v === 'skip' ? 'סומן כ״לא לקלוט״' : `נוסף ל״${valLabel(v)}״. לחצו "שמירה" כדי לשמור.`, 3500); keepScroll();
 }
 function bindAsk(){
@@ -588,7 +588,7 @@ function catOptions(r, kind){
   const exp = Object.entries(groups).map(([d, o]) => `<optgroup label="${esc(oneLine(d))}">${o.join('')}</optgroup>`).join('');
   const inc = `<optgroup label="הכנסות">${IMP.incs.map((n, k) => `<option value="i:${k}" ${r.v === 'i:' + k ? 'selected' : ''}>${esc(n)}</option>`).join('')}</optgroup>`;
   const incFirst = kind === 'bank' && r.amt < 0;
-  return `<option value="" ${!r.v ? 'selected' : ''}>— לבחירה —</option><option value="skip" ${r.v === 'skip' ? 'selected' : ''}>דילוג (לא לקלוט)</option>${r.v === 'later' ? '<option value="later" selected>לשאול אותי אחר כך</option>' : ''}${incFirst ? inc + exp : exp + (kind === 'bank' ? inc : '')}`;
+  return `<option value="" ${!r.v ? 'selected' : ''}>— לבחירה —</option><option value="skip" ${r.v === 'skip' ? 'selected' : ''}>דילוג (רק הפעם)</option>${r.v === 'later' ? '<option value="later" selected>לשאול אותי אחר כך</option>' : ''}${incFirst ? inc + exp : exp + (kind === 'bank' ? inc : '')}`;
 }
 function monthOptions(){
   const opts = [`<option value="tx" ${IMP.monthMode === 'tx' ? 'selected' : ''}>לפי תאריך העסקה</option>`];
@@ -685,7 +685,7 @@ function txAfter(kind){
   $$('[data-row]').forEach(s => s.onchange = () => {
     IMP.confirm = null; // classification changed → the plan check runs again on the next press
     const r = IMP.rows[+s.dataset.row]; r.v = s.value; r.touched = true; r.why = '';
-    if (s.value) { const n = normDesc(r.desc); IMP.rows.forEach(o => { if (o !== r && !o.v && !o.dup && normDesc(o.desc) === n) { o.v = s.value; o.touched = true; } }); }
+    if (s.value && s.value !== 'skip') { const n = normDesc(r.desc); IMP.rows.forEach(o => { if (o !== r && !o.v && !o.dup && normDesc(o.desc) === n) { o.v = s.value; o.touched = true; } }); }
     keepScroll();
   });
   const cm = $('#txCommit'); if (cm) cm.onclick = commitTx;
