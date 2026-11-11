@@ -98,12 +98,22 @@ async function pdfRowsXY(file){
   const rows = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const tc = await (await pdf.getPage(p)).getTextContent();
-    const items = tc.items.filter(it => it.str && it.str.trim()).map(it => ({x:it.transform[4] + (it.width || 0) / 2, y:it.transform[5], s:it.str.trim()}));
+    const items = tc.items.filter(it => it.str && it.str.trim()).map(it => ({l:it.transform[4], r:it.transform[4] + (it.width || 0), x:it.transform[4] + (it.width || 0) / 2, y:it.transform[5], s:it.str.trim()}));
     items.sort((a, b) => b.y - a.y || b.x - a.x);
     let cur = null;
     for (const it of items) { if (!cur || Math.abs(cur.y - it.y) > 2.5) { cur = {y:it.y, page:p, items:[]}; rows.push(cur); } cur.items.push(it); }
   }
-  rows.forEach(r => r.items.sort((a, b) => b.x - a.x));
+  rows.forEach(r => {
+    r.items.sort((a, b) => b.x - a.x);
+    // some banks (e.g. Leumi) print a number as touching reversed pieces: "27" "." "050" "," "6" = 6,050.27 – join pieces that touch
+    const out = [];
+    for (const it of r.items) {
+      const prev = out[out.length - 1], num = t => /^[\d.,\/\-−₪]+$/.test(t);
+      if (prev && num(prev.s) && num(it.s) && prev.l - it.r < 1.5 && prev.l - it.r > -2) { prev.parts.push(it.s); prev.l = it.l; prev.x = (prev.l + prev.r) / 2; }
+      else out.push({...it, parts:[it.s]});
+    }
+    r.items = out.map(it => ({...it, s:it.parts.length > 1 ? it.parts.slice().reverse().join('') : it.s}));
+  });
   return rows;
 }
 const DATE_T = /^\d{1,2}\/\d{1,2}\/\d{2,4}$/, MONEY_T = /^[-−]?₪?\s?-?[\d,]+\.\d{2}-?$/;
@@ -231,7 +241,7 @@ function buildRows(kind, items){
     const rule = ruleFor(it.desc, it.card, it.amt);
     if (row.dup) { row.v = 'skip'; row.why = impData().pending.some(q => q.h === h) ? 'ממתין לתשובה' : 'נקלט בעבר'; }
     else if (rule) { row.v = ruleToValue(rule); row.why = row.v ? 'לפי כלל' : ''; }
-    else if (kind === 'bank' && it.amt > 0 && CARD_RX.test(it.desc)) { row.v = 'skip'; row.why = 'חיוב כרטיס – מפורט בקובץ האשראי'; }
+    else if (kind === 'bank' && CARD_RX.test(it.desc)) /* card charges and card refunds are detailed in the card files */ { row.v = 'skip'; row.why = 'חיוב כרטיס – מפורט בקובץ האשראי'; }
     return row;
   });
 }
